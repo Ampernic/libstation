@@ -7,4 +7,5 @@
 # include "station-control.h"
 # include "station-service.h"
 # include "station-tray.h"
+# include "station-updates.h"
 #undef STATION_INSIDE

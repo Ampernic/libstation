@@ -17,6 +17,7 @@ station_headers = files(
   'station-control.h',
   'station-service.h',
   'station-tray.h',
+  'station-updates.h',
 )
 # Sources with public, introspectable API.
 station_core = files(
@@ -24,6 +25,7 @@ station_core = files(
   'station-control.c',
   'station-service.c',
   'station-tray.c',
+  'station-updates.c',
 )
 # Native backends — the only place per-OS code lives, under backends/<os>/
 # (internal symbols only, excluded from introspection).

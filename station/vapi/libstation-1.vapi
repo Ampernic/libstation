@@ -47,6 +47,13 @@ namespace Station {
 		public signal void activate ();
 		public signal void activated (uint object);
 	}
+	[CCode (cheader_filename = "station.h", type_id = "station_updates_get_type ()")]
+	public sealed class Updates : GLib.Object {
+		[CCode (has_construct_function = false)]
+		public Updates (string repo, string current_version);
+		public void check (bool include_prerelease);
+		public signal void available (string object, string p0, string p1);
+	}
 	[CCode (cheader_filename = "station.h", cprefix = "STATION_OS_", has_type_id = false)]
 	public enum Os {
 		OTHER,

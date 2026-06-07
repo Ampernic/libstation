@@ -19,6 +19,7 @@ station_deps = [
   dependency('glib-2.0'),
   dependency('gobject-2.0'),
   dependency('gio-2.0'),
+  dependency('json-glib-1.0'),   # parse the GitHub releases JSON in Station.Updates
 ]
 
 cc = meson.get_compiler('c')
