@@ -34,7 +34,15 @@ read_pid (const char *app_id)
   int pid = 0;
   if (g_file_get_contents (path, &content, NULL, NULL))
     {
-      pid = atoi (content);
+      /* Validate it's a plain positive integer: a corrupt/garbage pid file must
+       * not be turned into a kill target for some unrelated process. */
+      const char *p = g_strstrip (content);
+      gboolean ok = (*p != '\0');
+      for (const char *c = p; *c != '\0'; c++)
+        if (!g_ascii_isdigit (*c)) { ok = FALSE; break; }
+      gint64 v = ok ? g_ascii_strtoll (p, NULL, 10) : 0;
+      if (v > 0 && v <= G_MAXINT)
+        pid = (int) v;
       g_free (content);
     }
   g_free (path);
@@ -183,7 +191,14 @@ argv_to_cmdline (char **argv)
       if (i > 0)
         g_string_append_c (s, ' ');
       g_string_append_c (s, '"');
-      g_string_append (s, argv[i]);
+      /* Escape embedded quotes/backslashes so an arg with either doesn't break
+       * the Run-key command line / Exec= line. */
+      for (const char *c = argv[i]; *c != '\0'; c++)
+        {
+          if (*c == '"' || *c == '\\')
+            g_string_append_c (s, '\\');
+          g_string_append_c (s, *c);
+        }
       g_string_append_c (s, '"');
     }
   return g_string_free (s, FALSE);
@@ -373,6 +388,11 @@ station_android_request_battery_unrestricted (GdkSurface *surface G_GNUC_UNUSED)
 
 void
 station_android_open_notification_settings (GdkSurface *surface G_GNUC_UNUSED)
+{
+}
+
+void
+station_android_request_notification_permission (GdkSurface *surface G_GNUC_UNUSED)
 {
 }
 

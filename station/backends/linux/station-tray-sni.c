@@ -125,13 +125,31 @@ menu_method (GDBusConnection *conn G_GNUC_UNUSED, const char *sender G_GNUC_UNUS
     }
   else if (g_strcmp0 (method, "GetGroupProperties") == 0)
     {
+      /* (ai ids, as propertyNames): honour the requested id list; an empty list
+       * means "all items" per the com.canonical.dbusmenu spec. */
+      GVariant *ids = g_variant_get_child_value (params, 0);
+      gsize nids = g_variant_n_children (ids);
       GVariantBuilder out;
       g_variant_builder_init (&out, G_VARIANT_TYPE ("a(ia{sv})"));
-      g_variant_builder_add (&out, "(i@a{sv})", 0, menu_item_props (self, 0));
-      guint n = _station_tray_item_count (self);
-      for (guint i = 0; i < n; i++)
-        g_variant_builder_add (&out, "(i@a{sv})", (int) (i + 1),
-                               menu_item_props (self, (int) (i + 1)));
+      if (nids == 0)
+        {
+          g_variant_builder_add (&out, "(i@a{sv})", 0, menu_item_props (self, 0));
+          guint n = _station_tray_item_count (self);
+          for (guint i = 0; i < n; i++)
+            g_variant_builder_add (&out, "(i@a{sv})", (int) (i + 1),
+                                   menu_item_props (self, (int) (i + 1)));
+        }
+      else
+        {
+          for (gsize k = 0; k < nids; k++)
+            {
+              gint32 id;
+              g_variant_get_child (ids, k, "i", &id);
+              g_variant_builder_add (&out, "(i@a{sv})", id,
+                                     menu_item_props (self, id));
+            }
+        }
+      g_variant_unref (ids);
       g_dbus_method_invocation_return_value (inv,
           g_variant_new ("(a(ia{sv}))", &out));
     }

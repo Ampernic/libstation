@@ -186,6 +186,11 @@ station_control_server_start (StationControlServer *self,
   g_object_unref (effective);
   self->token = gen_token ();
   self->endpoint = win_endpoint_path (self->name);
+  /* The endpoint file holds the auth token for the loopback control port. It
+   * lives under the per-user config dir (g_get_user_config_dir), so other local
+   * users can't read it under default Windows ACLs — that directory's
+   * permissions are the protection (the POSIX path locks the socket to 0600 for
+   * the same reason). A tighter per-file ACL would need SetNamedSecurityInfo. */
   char *content = g_strdup_printf ("%u\n%s\n", port, self->token);
   ok = g_file_set_contents (self->endpoint, content, -1, error);
   g_free (content);

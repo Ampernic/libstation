@@ -56,14 +56,21 @@ void station_service_clear        (const char *app_id);
  * The foreground service + Application classes live in the APK (each app declares
  * its own in its own package), so their dotted names are passed in. The service
  * class must expose a static `setText(String)`; the application class a native
- * `nativeOnResume()` that it invokes from its activity-resume callback. */
+ * `nativeOnResume()` that it invokes from its activity-resume callback.
+ *
+ * Hidden from g-ir-scanner (GdkSurface isn't in the scanned namespaces, and the
+ * Vala binding for these lives in the hand-written libstation-android-1.vapi). */
 
+#ifndef __GI_SCANNER__
 typedef struct _GdkSurface GdkSurface;
 typedef void (*StationResumeFunc) (void);
 
 gboolean station_android_battery_unrestricted          (GdkSurface *surface);
 void     station_android_request_battery_unrestricted  (GdkSurface *surface);
 void     station_android_open_notification_settings    (GdkSurface *surface);
+/* Request the POST_NOTIFICATIONS runtime permission (Android 13+); no-op if
+ * already granted or below API 33. The foreground notification needs it to show. */
+void     station_android_request_notification_permission (GdkSurface *surface);
 
 /* Cache the app classes (via the activity's class loader) and register
  * @application_class.nativeOnResume. Call once with a realized surface. */
@@ -74,5 +81,6 @@ void     station_android_foreground_bind     (GdkSurface *surface,
 void     station_android_foreground_set_text (const char *text);
 /* Handler invoked on the GLib main loop each time the activity resumes. */
 void     station_android_set_resume_handler  (StationResumeFunc cb);
+#endif /* !__GI_SCANNER__ */
 
 G_END_DECLS

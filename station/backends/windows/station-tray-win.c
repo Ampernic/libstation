@@ -22,6 +22,7 @@ typedef struct
   HWND  hwnd;
   NOTIFYICONDATAW nid;
   HICON icon;
+  gboolean icon_shared;   /* the IDI_APPLICATION fallback must NOT be DestroyIcon'd */
 } Win;
 
 static wchar_t *
@@ -91,9 +92,12 @@ tray_wndproc (HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
   return DefWindowProcW (hwnd, msg, wp, lp);
 }
 
+/* Loads the tray icon. *shared is set TRUE only for the shared system
+ * IDI_APPLICATION fallback, which must never be passed to DestroyIcon. */
 static HICON
-load_icon (StationTray *self)
+load_icon (StationTray *self, gboolean *shared)
 {
+  *shared = FALSE;
   if (self->icon_file != NULL)
     {
       wchar_t *wf = to_w (self->icon_file);
@@ -108,7 +112,10 @@ load_icon (StationTray *self)
   HICON ic = (HICON) LoadImageW (GetModuleHandleW (NULL), MAKEINTRESOURCEW (1),
       IMAGE_ICON, GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON),
       LR_DEFAULTCOLOR);
-  return ic ? ic : LoadIconW (NULL, IDI_APPLICATION);
+  if (ic != NULL)
+    return ic;
+  *shared = TRUE;
+  return LoadIconW (NULL, IDI_APPLICATION);
 }
 
 void
@@ -137,7 +144,7 @@ _station_tray_backend_init (StationTray *self)
   SetWindowLongPtrW (win->hwnd, GWLP_USERDATA, (LONG_PTR) self);
   tray_enable_dark (win->hwnd);
 
-  win->icon = load_icon (self);
+  win->icon = load_icon (self, &win->icon_shared);
   win->nid.cbSize = sizeof (win->nid);
   win->nid.hWnd = win->hwnd;
   win->nid.uID = 1;
@@ -154,12 +161,14 @@ _station_tray_backend_update (StationTray *self)
   if (win == NULL || win->hwnd == NULL)
     return;
   /* Refresh the icon + tooltip; the menu is rebuilt live on right-click. */
-  HICON ic = load_icon (self);
+  gboolean shared;
+  HICON ic = load_icon (self, &shared);
   if (ic != NULL)
     {
-      if (win->icon)
+      if (win->icon != NULL && !win->icon_shared)
         DestroyIcon (win->icon);
       win->icon = ic;
+      win->icon_shared = shared;
       win->nid.hIcon = ic;
     }
   win->nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
@@ -181,7 +190,7 @@ _station_tray_backend_dispose (StationTray *self)
       Shell_NotifyIconW (NIM_DELETE, &win->nid);
       DestroyWindow (win->hwnd);
     }
-  if (win->icon != NULL)
+  if (win->icon != NULL && !win->icon_shared)
     DestroyIcon (win->icon);
   g_free (win);
   self->backend = NULL;

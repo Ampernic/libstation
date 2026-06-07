@@ -13,6 +13,7 @@
 #else
 # include <unistd.h>
 # if defined(__APPLE__)
+#  include <stdlib.h>      /* realpath, free */
 #  include <mach-o/dyld.h>
 #  include <limits.h>
 # endif
@@ -101,8 +102,12 @@ station_get_executable_path (void)
   uint32_t size = sizeof (buf);
   if (_NSGetExecutablePath (buf, &size) != 0)
     return NULL;
+  /* realpath() returns malloc'd memory; the documented contract is "free with
+   * g_free", so copy it into a g_free-able buffer and release the original. */
   char *real = realpath (buf, NULL);   /* resolve symlinks/.. */
-  return real ? real : g_strdup (buf);
+  char *out = g_strdup (real ? real : buf);
+  free (real);
+  return out;
 #elif defined(__linux__) && !defined(__ANDROID__)
   return g_file_read_link ("/proc/self/exe", NULL);
 #else
