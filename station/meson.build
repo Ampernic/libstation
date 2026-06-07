@@ -13,9 +13,11 @@ version_h = configure_file(
 station_headers = files(
   'station.h',
   'station-platform.h',
+  'station-control.h',
 )
 station_sources = files(
   'station-platform.c',
+  'station-control.c',
 )
 
 station_extra_deps = []

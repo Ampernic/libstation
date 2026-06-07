@@ -4,4 +4,5 @@
 #define STATION_INSIDE
 # include "station-version.h"
 # include "station-platform.h"
+# include "station-control.h"
 #undef STATION_INSIDE
