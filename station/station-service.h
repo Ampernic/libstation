@@ -68,6 +68,10 @@ typedef void (*StationResumeFunc) (void);
 gboolean station_android_battery_unrestricted          (GdkSurface *surface);
 void     station_android_request_battery_unrestricted  (GdkSurface *surface);
 void     station_android_open_notification_settings    (GdkSurface *surface);
+/* Open a URI in the system browser/handler (ACTION_VIEW). The contextless
+ * station_open_uri() can't do this on Android — it needs the Activity. */
+void     station_android_open_uri                      (GdkSurface *surface,
+                                                        const char *uri);
 /* Request the POST_NOTIFICATIONS runtime permission (Android 13+); no-op if
  * already granted or below API 33. The foreground notification needs it to show. */
 void     station_android_request_notification_permission (GdkSurface *surface);

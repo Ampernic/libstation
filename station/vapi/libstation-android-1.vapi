@@ -19,6 +19,8 @@ namespace Station {
 	public static void android_request_battery_unrestricted (Gdk.Surface surface);
 	[CCode (cname = "station_android_open_notification_settings", cheader_filename = "station.h")]
 	public static void android_open_notification_settings (Gdk.Surface surface);
+	[CCode (cname = "station_android_open_uri", cheader_filename = "station.h")]
+	public static void android_open_uri (Gdk.Surface surface, string uri);
 	[CCode (cname = "station_android_request_notification_permission", cheader_filename = "station.h")]
 	public static void android_request_notification_permission (Gdk.Surface surface);
 	[CCode (cname = "station_android_foreground_bind", cheader_filename = "station.h")]

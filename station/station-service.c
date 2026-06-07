@@ -397,6 +397,12 @@ station_android_request_notification_permission (GdkSurface *surface G_GNUC_UNUS
 }
 
 void
+station_android_open_uri (GdkSurface *surface G_GNUC_UNUSED,
+                          const char *uri G_GNUC_UNUSED)
+{
+}
+
+void
 station_android_foreground_bind (GdkSurface *surface G_GNUC_UNUSED,
                                  const char *application_class G_GNUC_UNUSED,
                                  const char *service_class G_GNUC_UNUSED)

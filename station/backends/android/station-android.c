@@ -295,6 +295,27 @@ station_android_open_notification_settings (GdkSurface *surface)
 }
 
 void
+station_android_open_uri (GdkSurface *surface, const char *uri)
+{
+  JNIEnv *env;
+  jobject activity;
+  GdkAndroidToplevel *toplevel;
+  if (!resolve (surface, &env, &activity, &toplevel))
+    return;
+
+  jclass uri_cls = (*env)->FindClass (env, "android/net/Uri");
+  jmethodID parse = uri_cls ? (*env)->GetStaticMethodID (env, uri_cls, "parse",
+                      "(Ljava/lang/String;)Landroid/net/Uri;") : NULL;
+  jstring juri = parse ? (*env)->NewStringUTF (env, uri ? uri : "") : NULL;
+  jobject uobj = juri ? (*env)->CallStaticObjectMethod (env, uri_cls, parse, juri) : NULL;
+  if (juri != NULL) (*env)->DeleteLocalRef (env, juri);
+  if (!exc (env) && uobj != NULL)
+    launch_settings (env, toplevel, "android.intent.action.VIEW", uobj);
+  if (uobj != NULL) (*env)->DeleteLocalRef (env, uobj);
+  if (uri_cls != NULL) (*env)->DeleteLocalRef (env, uri_cls);
+}
+
+void
 station_android_request_notification_permission (GdkSurface *surface)
 {
   JNIEnv *env;
