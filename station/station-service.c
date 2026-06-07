@@ -355,3 +355,41 @@ static void
 station_service_init (StationService *self G_GNUC_UNUSED)
 {
 }
+
+/* ---- Android background operation --------------------------------------- */
+/* The real JNI-backed implementation lives in backends/android/station-android.c
+ * (built only for Android). Everywhere else these are no-ops. */
+#ifndef __ANDROID__
+gboolean
+station_android_battery_unrestricted (GdkSurface *surface G_GNUC_UNUSED)
+{
+  return TRUE;   /* no battery manager off Android: nothing to restrict */
+}
+
+void
+station_android_request_battery_unrestricted (GdkSurface *surface G_GNUC_UNUSED)
+{
+}
+
+void
+station_android_open_notification_settings (GdkSurface *surface G_GNUC_UNUSED)
+{
+}
+
+void
+station_android_foreground_bind (GdkSurface *surface G_GNUC_UNUSED,
+                                 const char *application_class G_GNUC_UNUSED,
+                                 const char *service_class G_GNUC_UNUSED)
+{
+}
+
+void
+station_android_foreground_set_text (const char *text G_GNUC_UNUSED)
+{
+}
+
+void
+station_android_set_resume_handler (StationResumeFunc cb G_GNUC_UNUSED)
+{
+}
+#endif /* !__ANDROID__ */

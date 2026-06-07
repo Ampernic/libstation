@@ -38,6 +38,14 @@ elif host_os == 'darwin'
   add_languages('objc', native: false)
   station_extra_deps += dependency('appleframeworks', modules: ['Cocoa'])
   station_backends += files('backends/macos/station-tray-mac.m')
+elif host_os == 'android'
+  # gdk-android gives the JNI env + Activity from a surface; jni.h comes from the
+  # NDK toolchain. No tray on Android — status is the foreground notification.
+  station_extra_deps += dependency('gtk4')
+  station_backends += files(
+    'backends/android/station-android.c',
+    'backends/android/station-tray-android.c',
+  )
 else
   station_backends += files('backends/linux/station-tray-sni.c')   # StatusNotifierItem over GDBus
 endif
@@ -67,16 +75,27 @@ libstation = library('station-' + api_version,
 # vapidir is exposed below (source dir for subproject use, datadir for installed).
 vapi_pkg = 'libstation-' + api_version
 vapi_dir = meson.current_source_dir() / 'vapi'
+vapi_install_dir = get_option('datadir') / 'vala' / 'vapi'
 install_data(
   vapi_dir / (vapi_pkg + '.vapi'),
   vapi_dir / (vapi_pkg + '.deps'),
-  install_dir: get_option('datadir') / 'vala' / 'vapi',
+  install_dir: vapi_install_dir,
 )
+# The Android extras binding (Gdk.Surface-typed) is only useful — and only
+# parseable (it needs the gtk4 vapi) — on Android.
+if host_os == 'android'
+  install_data(
+    vapi_dir / 'libstation-android-' + api_version + '.vapi',
+    vapi_dir / 'libstation-android-' + api_version + '.deps',
+    install_dir: vapi_install_dir,
+  )
+endif
 
 # GObject-Introspection (GIR + typelib) — optional, for non-Vala consumers
-# (Python/JS). Off automatically when g-ir-scanner is unavailable (e.g. cross).
+# (Python/JS). Off on Android (cross can't run g-ir-scanner) and wherever the
+# scanner is unavailable.
 gir = []
-if get_option('introspection').allowed()
+if host_os != 'android' and get_option('introspection').allowed()
   gir = gnome.generate_gir(libstation,
     sources: station_core + station_headers + [version_h],
     namespace: 'Station',

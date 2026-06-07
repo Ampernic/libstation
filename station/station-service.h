@@ -45,4 +45,34 @@ gboolean station_service_get_autostart (StationService *self);
 void station_service_mark_running (const char *app_id);
 void station_service_clear        (const char *app_id);
 
+/* ---- Android background operation -------------------------------------------
+ *
+ * Android has no separate daemon: the app runs in-process and stays alive via a
+ * foreground service with an ongoing notification, plus a battery-optimization
+ * exemption. These helpers wrap that (no-ops on every other platform). They take
+ * the realized GdkSurface so they can reach the JNI env + Activity; GdkSurface is
+ * forward-declared here so the header needs no GDK/GTK include off Android.
+ *
+ * The foreground service + Application classes live in the APK (each app declares
+ * its own in its own package), so their dotted names are passed in. The service
+ * class must expose a static `setText(String)`; the application class a native
+ * `nativeOnResume()` that it invokes from its activity-resume callback. */
+
+typedef struct _GdkSurface GdkSurface;
+typedef void (*StationResumeFunc) (void);
+
+gboolean station_android_battery_unrestricted          (GdkSurface *surface);
+void     station_android_request_battery_unrestricted  (GdkSurface *surface);
+void     station_android_open_notification_settings    (GdkSurface *surface);
+
+/* Cache the app classes (via the activity's class loader) and register
+ * @application_class.nativeOnResume. Call once with a realized surface. */
+void     station_android_foreground_bind     (GdkSurface *surface,
+                                              const char *application_class,
+                                              const char *service_class);
+/* Update the ongoing notification text (calls <service_class>.setText). */
+void     station_android_foreground_set_text (const char *text);
+/* Handler invoked on the GLib main loop each time the activity resumes. */
+void     station_android_set_resume_handler  (StationResumeFunc cb);
+
 G_END_DECLS
