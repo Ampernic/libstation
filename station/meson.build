@@ -29,6 +29,12 @@ station_core = files(
 # (internal symbols only, excluded from introspection).
 station_backends = []
 station_extra_deps = []
+# Control's POSIX transport uses GUnixSocketAddress (<gio/gunixsocketaddress.h>),
+# which lives in gio-unix-2.0; declare it explicitly so the include path is right
+# everywhere (notably the Android cross build), not just where gio-2.0 leaks it.
+if host_os != 'windows'
+  station_extra_deps += dependency('gio-unix-2.0')
+endif
 if host_os == 'windows'
   station_extra_deps += cc.find_library('shell32')    # ShellExecute / Shell_NotifyIcon
   station_extra_deps += cc.find_library('advapi32')   # registry (autostart)
