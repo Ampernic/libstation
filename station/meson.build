@@ -54,14 +54,9 @@ libstation = library('station-' + api_version,
   install: true,
 )
 
-station_dep = declare_dependency(
-  link_with: libstation,
-  include_directories: include_directories('.'),
-  dependencies: station_deps,
-)
-
 # GObject-Introspection (GIR + typelib) — scan only the public C API.
 gir = []
+station_dep_list = station_deps
 if get_option('introspection').allowed()
   gir = gnome.generate_gir(libstation,
     sources: station_core + station_headers + [version_h],
@@ -77,13 +72,22 @@ if get_option('introspection').allowed()
   )
 
   if get_option('vapi')
-    gnome.generate_vapi('libstation-' + api_version,
+    # The returned dependency carries the .vapi so a Vala consumer (e.g. the
+    # subproject case) picks it up just by depending on station_dep — no manual
+    # --vapidir/--pkg needed.
+    station_dep_list += gnome.generate_vapi('libstation-' + api_version,
       sources: gir[0],
       packages: ['glib-2.0', 'gobject-2.0', 'gio-2.0'],
       install: true,
     )
   endif
 endif
+
+station_dep = declare_dependency(
+  link_with: libstation,
+  include_directories: include_directories('.'),
+  dependencies: station_dep_list,
+)
 
 pkgconfig = import('pkgconfig')
 pkgconfig.generate(libstation,
