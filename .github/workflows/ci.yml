@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build gcc pkg-config \
+            libglib2.0-dev gobject-introspection libgirepository1.0-dev valac
+      - name: Build + install
+        run: |
+          meson setup _build
+          meson compile -C _build
+          meson install -C _build --destdir "$PWD/_inst"
+          find _inst \( -name '*.gir' -o -name '*.typelib' -o -name '*.vapi' -o -name '*.pc' \) | sort
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-gobject-introspection
+            mingw-w64-ucrt-x86_64-vala
+      - name: Build
+        run: |
+          meson setup _build
+          meson compile -C _build
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: brew install meson ninja pkg-config glib gobject-introspection vala
+      - name: Build
+        run: |
+          meson setup _build
+          meson compile -C _build
