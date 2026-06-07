@@ -10,31 +10,45 @@ version_h = configure_file(
   configuration: conf,
 )
 
+# Public headers (installed + introspected).
 station_headers = files(
   'station.h',
   'station-platform.h',
   'station-control.h',
   'station-service.h',
+  'station-tray.h',
 )
-station_sources = files(
+# Sources with public, introspectable API.
+station_core = files(
   'station-platform.c',
   'station-control.c',
   'station-service.c',
+  'station-tray.c',
 )
-
+# Native backends (internal symbols only — excluded from introspection).
+station_backends = []
 station_extra_deps = []
 if host_os == 'windows'
-  station_extra_deps += cc.find_library('shell32')    # ShellExecute
+  station_extra_deps += cc.find_library('shell32')    # ShellExecute / Shell_NotifyIcon
   station_extra_deps += cc.find_library('advapi32')   # registry (autostart)
+  station_extra_deps += cc.find_library('user32')     # window + menu
+  station_backends += files('station-tray-win.c')
+elif host_os == 'darwin'
+  add_languages('objc', native: false)
+  station_extra_deps += dependency('appleframeworks', modules: ['Cocoa'])
+  station_backends += files('station-tray-mac.m')
+else
+  station_backends += files('station-tray-sni.c')      # StatusNotifierItem over GDBus
 endif
 
 header_subdir = 'libstation-' + api_version / 'station'
 install_headers(station_headers, version_h, subdir: header_subdir)
 
 libstation = library('station-' + api_version,
-  station_sources, version_h,
+  station_core, station_backends, version_h,
   dependencies: station_deps + station_extra_deps,
   c_args: ['-DSTATION_COMPILATION'],
+  objc_args: ['-DSTATION_COMPILATION'],
   soversion: '0',
   version: meson.project_version(),
   install: true,
@@ -46,11 +60,11 @@ station_dep = declare_dependency(
   dependencies: station_deps,
 )
 
-# GObject-Introspection (GIR + typelib) so the library is usable from C, Python, JS.
+# GObject-Introspection (GIR + typelib) — scan only the public C API.
 gir = []
 if get_option('introspection').allowed()
   gir = gnome.generate_gir(libstation,
-    sources: station_sources + station_headers + [version_h],
+    sources: station_core + station_headers + [version_h],
     namespace: 'Station',
     nsversion: api_version,
     identifier_prefix: 'Station',
@@ -62,7 +76,6 @@ if get_option('introspection').allowed()
     install: true,
   )
 
-  # Vala binding generated from the GIR.
   if get_option('vapi')
     gnome.generate_vapi('libstation-' + api_version,
       sources: gir[0],
