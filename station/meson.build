@@ -14,15 +14,18 @@ station_headers = files(
   'station.h',
   'station-platform.h',
   'station-control.h',
+  'station-service.h',
 )
 station_sources = files(
   'station-platform.c',
   'station-control.c',
+  'station-service.c',
 )
 
 station_extra_deps = []
 if host_os == 'windows'
-  station_extra_deps += cc.find_library('shell32')   # ShellExecute
+  station_extra_deps += cc.find_library('shell32')    # ShellExecute
+  station_extra_deps += cc.find_library('advapi32')   # registry (autostart)
 endif
 
 header_subdir = 'libstation-' + api_version / 'station'
