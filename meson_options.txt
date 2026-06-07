@@ -1,0 +1,7 @@
+option('introspection',
+  type: 'feature', value: 'auto',
+  description: 'Generate a GObject-Introspection repository (GIR + typelib)')
+
+option('vapi',
+  type: 'boolean', value: true,
+  description: 'Generate a Vala binding (.vapi); requires introspection')

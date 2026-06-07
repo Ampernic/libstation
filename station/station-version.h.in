@@ -1,0 +1,7 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
+#pragma once
+
+#define STATION_VERSION_STRING "@VERSION@"
+#define STATION_MAJOR_VERSION (@MAJOR@)
+#define STATION_MINOR_VERSION (@MINOR@)
+#define STATION_MICRO_VERSION (@MICRO@)
