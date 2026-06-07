@@ -10,9 +10,12 @@
 # endif
 # include <windows.h>
 # include <shellapi.h>
-#elif defined(__APPLE__)
-# include <mach-o/dyld.h>
-# include <limits.h>
+#else
+# include <unistd.h>
+# if defined(__APPLE__)
+#  include <mach-o/dyld.h>
+#  include <limits.h>
+# endif
 #endif
 
 StationOs
@@ -104,5 +107,15 @@ station_get_executable_path (void)
   return g_file_read_link ("/proc/self/exe", NULL);
 #else
   return NULL;   /* Android: /proc/self/exe is app_process, not useful */
+#endif
+}
+
+gint64
+station_get_pid (void)
+{
+#if defined(G_OS_WIN32)
+  return (gint64) GetCurrentProcessId ();
+#else
+  return (gint64) getpid ();
 #endif
 }

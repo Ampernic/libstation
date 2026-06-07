@@ -66,4 +66,13 @@ gboolean     station_open_uri (const char *uri,
  */
 char        *station_get_executable_path (void);
 
+/**
+ * station_get_pid:
+ *
+ * Returns: the numeric id of the current process (GetCurrentProcessId on
+ *   Windows, getpid() elsewhere). Useful for pid-file based lifecycle where the
+ *   native process-id, not GLib's #GPid handle, is needed.
+ */
+gint64       station_get_pid (void);
+
 G_END_DECLS
