@@ -130,6 +130,9 @@ station_dep = declare_dependency(
 pkgconfig = import('pkgconfig')
 pkgconfig.generate(libstation,
   name: vapi_pkg,
+  # The .pc is named station-<api> (not libstation-<api>) so a system consumer's
+  # dependency('station-1') resolves it — the same name the wrap's [provide] uses.
+  filebase: 'station-' + api_version,
   description: 'Cross-platform desktop/mobile integration for GTK apps',
   subdirs: 'libstation-' + api_version,
   requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0'],
