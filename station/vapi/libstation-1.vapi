@@ -53,6 +53,8 @@ namespace Station {
 		public Updates (string repo, string current_version);
 		public void check (bool include_prerelease);
 		public signal void available (string object, string p0, string p1);
+		public signal void up_to_date ();
+		public signal void failed (string object);
 	}
 	[CCode (cheader_filename = "station.h", cprefix = "STATION_OS_", has_type_id = false)]
 	public enum Os {

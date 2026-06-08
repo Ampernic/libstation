@@ -41,7 +41,11 @@ StationUpdates *station_updates_new (const char *repo, const char *current_versi
  */
 void station_updates_check (StationUpdates *self, gboolean include_prerelease);
 
-/* Signal "available" (const char *version, const char *url, const char *notes):
- * a newer release exists. version has no leading "v"; url is its release page. */
+/* Exactly one of these three signals fires per station_updates_check():
+ *   "available" (const char *version, const char *url, const char *notes):
+ *       a newer release exists. version has no leading "v"; url is its release page.
+ *   "up-to-date" (void): the check succeeded and no newer release applies.
+ *   "failed" (const char *reason): the check could not complete (network/TLS,
+ *       HTTP status, malformed response); reason is a human-readable diagnostic. */
 
 G_END_DECLS

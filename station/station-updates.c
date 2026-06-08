@@ -2,6 +2,7 @@
 #ifndef STATION_COMPILATION
 # define STATION_COMPILATION
 #endif
+#define G_LOG_DOMAIN "Station-Updates"
 #include "station-updates.h"
 
 #include <gio/gio.h>
@@ -20,8 +21,15 @@ struct _StationUpdates
 
 G_DEFINE_FINAL_TYPE (StationUpdates, station_updates, G_TYPE_OBJECT)
 
-enum { SIG_AVAILABLE, N_SIGNALS };
+enum { SIG_AVAILABLE, SIG_UP_TO_DATE, SIG_FAILED, N_SIGNALS };
 static guint signals[N_SIGNALS];
+
+static void
+emit_failed (StationUpdates *self, const char *reason)
+{
+  g_warning ("update check failed: %s", reason);
+  g_signal_emit (self, signals[SIG_FAILED], 0, reason);
+}
 
 static const char *
 strip_v (const char *s)
@@ -73,7 +81,9 @@ parse_and_emit (StationUpdates *self, const char *body, gsize len)
   GError *err = NULL;
   if (!json_parser_load_from_data (parser, body, (gssize) len, &err))
     {
-      g_debug ("station updates: parse failed: %s", err ? err->message : "?");
+      char *r = g_strdup_printf ("malformed JSON: %s", err ? err->message : "?");
+      emit_failed (self, r);
+      g_free (r);
       g_clear_error (&err);
       g_object_unref (parser);
       return;
@@ -81,6 +91,7 @@ parse_and_emit (StationUpdates *self, const char *body, gsize len)
   JsonNode *root = json_parser_get_root (parser);
   if (root == NULL || !JSON_NODE_HOLDS_ARRAY (root))
     {
+      emit_failed (self, "unexpected response (not a releases array)");
       g_object_unref (parser);
       return;
     }
@@ -104,10 +115,21 @@ parse_and_emit (StationUpdates *self, const char *body, gsize len)
                               ? json_object_get_string_member (o, "html_url") : "";
           const char *notes = json_object_has_member (o, "body")
                                 ? json_object_get_string_member (o, "body") : "";
+          g_message ("update available: %s (current %s)", strip_v (tag), self->current);
           g_signal_emit (self, signals[SIG_AVAILABLE], 0, strip_v (tag), url, notes);
         }
-      break; /* newest applicable release decided the outcome */
+      else
+        {
+          g_debug ("up to date: latest applicable %s, current %s",
+                   strip_v (tag), self->current);
+          g_signal_emit (self, signals[SIG_UP_TO_DATE], 0);
+        }
+      g_object_unref (parser);
+      return; /* newest applicable release decided the outcome */
     }
+  /* No applicable (non-draft, non-prerelease unless asked) release at all. */
+  g_debug ("up to date: no applicable release found (current %s)", self->current);
+  g_signal_emit (self, signals[SIG_UP_TO_DATE], 0);
   g_object_unref (parser);
 }
 
@@ -179,7 +201,7 @@ fetch_done (GObject *src, GAsyncResult *res, gpointer user_data)
   GBytes *bytes = g_task_propagate_pointer (G_TASK (res), &err);
   if (bytes == NULL)
     {
-      g_debug ("station updates: check failed: %s", err ? err->message : "?");
+      emit_failed (self, err ? err->message : "network error");
       g_clear_error (&err);
       return;
     }
@@ -187,11 +209,23 @@ fetch_done (GObject *src, GAsyncResult *res, gpointer user_data)
   const char *data = g_bytes_get_data (bytes, &len);
   /* Split off the HTTP headers; require a 200 status. */
   const char *sep = g_strstr_len (data, (gssize) len, "\r\n\r\n");
-  if (sep != NULL)
+  if (sep == NULL)
+    emit_failed (self, "no HTTP response headers");
+  else
     {
       gsize head_len = (gsize) (sep - data);
       if (g_strstr_len (data, (gssize) head_len, " 200 ") != NULL)
         parse_and_emit (self, sep + 4, len - head_len - 4);
+      else
+        {
+          /* Surface the status line (first line of the headers) for diagnosis. */
+          const char *eol = g_strstr_len (data, (gssize) head_len, "\r\n");
+          char *status = g_strndup (data, eol ? (gsize) (eol - data) : head_len);
+          char *r = g_strdup_printf ("HTTP error: %s", status);
+          emit_failed (self, r);
+          g_free (r);
+          g_free (status);
+        }
     }
   g_bytes_unref (bytes);
 }
@@ -201,6 +235,8 @@ station_updates_check (StationUpdates *self, gboolean include_prerelease)
 {
   g_return_if_fail (STATION_IS_UPDATES (self));
   self->include_pre = include_prerelease;
+  g_debug ("checking %s for releases newer than %s%s", self->repo, self->current,
+           include_prerelease ? " (incl. prereleases)" : "");
 
   char *request = g_strdup_printf (
       "GET /repos/%s/releases?per_page=15 HTTP/1.0\r\n"
@@ -246,6 +282,12 @@ station_updates_class_init (StationUpdatesClass *klass)
   signals[SIG_AVAILABLE] = g_signal_new ("available",
       G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
       G_TYPE_NONE, 3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+  signals[SIG_UP_TO_DATE] = g_signal_new ("up-to-date",
+      G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+      G_TYPE_NONE, 0);
+  signals[SIG_FAILED] = g_signal_new ("failed",
+      G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+      G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void
