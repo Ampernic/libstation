@@ -133,7 +133,38 @@ parse_and_emit (StationUpdates *self, const char *body, gsize len)
   g_object_unref (parser);
 }
 
-/* ---- network fetch (worker thread, sync GIO) ---------------------------- */
+/* ---- network fetch (worker thread) -------------------------------------- */
+/* The worker returns the raw JSON body (a GBytes) on success, or fails the GTask
+ * with a human-readable message. Two transports, because the GIO TLS backend
+ * (glib-networking) is a separate module that the Android APK doesn't ship:
+ *   - desktop: a GIO TLS socket speaks HTTP/1.0 to api.github.com and the headers
+ *     are stripped here so the body GBytes is pure JSON;
+ *   - Android: java.net does the HTTPS GET via the platform TLS stack + system CA
+ *     and hands back the body directly (status checked Java-side). */
+
+#ifdef __ANDROID__
+/* station-android.c. http_get returns a g_malloc'd body (caller frees) + length,
+ * or NULL with *error set; prime captures the JavaVM while on the main thread. */
+extern void     station_updates_android_prime (void);
+extern guint8 * station_updates_android_http_get (const char *url, gsize *out_len,
+                                                  GError **error);
+#else
+/* On Windows the GIO TLS backend (gnutls) loads but has no system CA store, so
+ * verification fails with "Unacceptable TLS certificate". The app exports
+ * SSL_CERT_FILE pointing at the bundled CA bundle (for the engine's own TLS);
+ * reuse it here as the TLS connection's trust database at handshake time. Where
+ * SSL_CERT_FILE is unset (Linux/macOS) the backend's system trust is used. */
+static void
+apply_ca_file (GSocketClient *client, GSocketClientEvent ev,
+               GSocketConnectable *connectable, GIOStream *connection,
+               gpointer user_data)
+{
+  (void) client; (void) connectable;
+  if (ev == G_SOCKET_CLIENT_TLS_HANDSHAKING && G_IS_TLS_CONNECTION (connection))
+    g_tls_connection_set_database (G_TLS_CONNECTION (connection),
+                                   G_TLS_DATABASE (user_data));
+}
+#endif
 
 static void
 fetch_thread (GTask *task, gpointer src, gpointer task_data,
@@ -143,9 +174,35 @@ fetch_thread (GTask *task, gpointer src, gpointer task_data,
   const char *request = task_data;
   GError *err = NULL;
 
+#ifdef __ANDROID__
+  gsize blen = 0;
+  guint8 *body = station_updates_android_http_get (request, &blen, &err);
+  if (body == NULL)
+    {
+      g_task_return_error (task, err);
+      return;
+    }
+  g_task_return_pointer (task, g_bytes_new_take (body, blen),
+                         (GDestroyNotify) g_bytes_unref);
+#else
   GSocketClient *client = g_socket_client_new ();
   g_socket_client_set_tls (client, TRUE);
   g_socket_client_set_timeout (client, 15);
+
+  const char *ca_file = g_getenv ("SSL_CERT_FILE");
+  if (ca_file != NULL && *ca_file != '\0')
+    {
+      GTlsDatabase *ca_db = g_tls_file_database_new (ca_file, NULL);
+      if (ca_db != NULL)
+        {
+          /* Tie the database's lifetime to the client so every return path frees
+           * it; the handler holds only a borrowed pointer. */
+          g_signal_connect (client, "event", G_CALLBACK (apply_ca_file), ca_db);
+          g_object_set_data_full (G_OBJECT (client), "station-ca-db", ca_db,
+                                  g_object_unref);
+        }
+    }
+
   GSocketConnection *conn = g_socket_client_connect_to_host (
       client, "api.github.com", 443, cancellable, &err);
   if (conn == NULL)
@@ -188,8 +245,32 @@ fetch_thread (GTask *task, gpointer src, gpointer task_data,
       g_task_return_error (task, err);
       return;
     }
-  g_task_return_pointer (task, g_byte_array_free_to_bytes (buf),
-                         (GDestroyNotify) g_bytes_unref);
+
+  /* Strip the HTTP headers and require a 200, so the body GBytes is pure JSON. */
+  const char *data = (const char *) buf->data;
+  const char *sep = g_strstr_len (data, (gssize) buf->len, "\r\n\r\n");
+  if (sep == NULL)
+    {
+      g_byte_array_unref (buf);
+      g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                               "no HTTP response headers");
+      return;
+    }
+  gsize head_len = (gsize) (sep - data);
+  if (g_strstr_len (data, (gssize) head_len, " 200 ") == NULL)
+    {
+      const char *eol = g_strstr_len (data, (gssize) head_len, "\r\n");
+      char *status = g_strndup (data, eol ? (gsize) (eol - data) : head_len);
+      g_byte_array_unref (buf);
+      g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                               "HTTP error: %s", status);
+      g_free (status);
+      return;
+    }
+  GBytes *body = g_bytes_new (sep + 4, buf->len - head_len - 4);
+  g_byte_array_unref (buf);
+  g_task_return_pointer (task, body, (GDestroyNotify) g_bytes_unref);
+#endif
 }
 
 static void
@@ -207,26 +288,7 @@ fetch_done (GObject *src, GAsyncResult *res, gpointer user_data)
     }
   gsize len = 0;
   const char *data = g_bytes_get_data (bytes, &len);
-  /* Split off the HTTP headers; require a 200 status. */
-  const char *sep = g_strstr_len (data, (gssize) len, "\r\n\r\n");
-  if (sep == NULL)
-    emit_failed (self, "no HTTP response headers");
-  else
-    {
-      gsize head_len = (gsize) (sep - data);
-      if (g_strstr_len (data, (gssize) head_len, " 200 ") != NULL)
-        parse_and_emit (self, sep + 4, len - head_len - 4);
-      else
-        {
-          /* Surface the status line (first line of the headers) for diagnosis. */
-          const char *eol = g_strstr_len (data, (gssize) head_len, "\r\n");
-          char *status = g_strndup (data, eol ? (gsize) (eol - data) : head_len);
-          char *r = g_strdup_printf ("HTTP error: %s", status);
-          emit_failed (self, r);
-          g_free (r);
-          g_free (status);
-        }
-    }
+  parse_and_emit (self, data, len);
   g_bytes_unref (bytes);
 }
 
@@ -238,6 +300,12 @@ station_updates_check (StationUpdates *self, gboolean include_prerelease)
   g_debug ("checking %s for releases newer than %s%s", self->repo, self->current,
            include_prerelease ? " (incl. prereleases)" : "");
 
+#ifdef __ANDROID__
+  /* java.net needs a full URL; capture the JavaVM now, on the main thread. */
+  station_updates_android_prime ();
+  char *request = g_strdup_printf (
+      "https://api.github.com/repos/%s/releases?per_page=15", self->repo);
+#else
   char *request = g_strdup_printf (
       "GET /repos/%s/releases?per_page=15 HTTP/1.0\r\n"
       "Host: api.github.com\r\n"
@@ -245,6 +313,7 @@ station_updates_check (StationUpdates *self, gboolean include_prerelease)
       "Accept: application/vnd.github+json\r\n"
       "Connection: close\r\n\r\n",
       self->repo);
+#endif
 
   GTask *task = g_task_new (self, self->cancel, fetch_done, NULL);
   g_task_set_task_data (task, request, g_free);
