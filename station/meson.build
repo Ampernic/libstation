@@ -29,6 +29,11 @@ station_core = files(
   'station-updates.c',
   'station-single-instance.c',
 )
+# Internal helpers with no public/introspectable API: built into the library but
+# kept out of the GIR/vapi. station-http is the desktop HTTPS transport.
+station_internal = files(
+  'station-http.c',
+)
 # Native backends — the only place per-OS code lives, under backends/<os>/
 # (internal symbols only, excluded from introspection).
 station_backends = []
@@ -68,7 +73,7 @@ install_headers(station_headers, version_h, subdir: header_subdir)
 station_inc = include_directories('.')
 
 libstation = library('station-' + api_version,
-  station_core, station_backends, version_h,
+  station_core, station_internal, station_backends, version_h,
   dependencies: station_deps + station_extra_deps,
   include_directories: station_inc,
   c_args: ['-DSTATION_COMPILATION'],
