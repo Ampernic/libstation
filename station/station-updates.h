@@ -7,6 +7,8 @@
 
 #include <glib-object.h>
 
+#include "station-updates-schema.h"
+
 G_BEGIN_DECLS
 
 /* Checks a project's GitHub releases for a version newer than the running build
@@ -29,6 +31,20 @@ G_DECLARE_FINAL_TYPE (StationUpdates, station_updates, STATION, UPDATES, GObject
  *   leading "v" is ignored
  */
 StationUpdates *station_updates_new (const char *repo, const char *current_version);
+
+/**
+ * station_updates_new_with_schema:
+ * @schema: the release source to query (a forge preset or a custom schema)
+ * @repo: "owner/name" substituted into the schema's URL template
+ * @current_version: this build's version; a leading "v" is ignored
+ *
+ * Like station_updates_new() but against any source described by @schema (a
+ * self-hosted Gitea/Forgejo, GitHub, or a custom JSON endpoint). station_updates_new()
+ * is the GitHub shortcut. The object refs @schema.
+ */
+StationUpdates *station_updates_new_with_schema (StationReleaseSchema *schema,
+                                                 const char *repo,
+                                                 const char *current_version);
 
 /**
  * station_updates_add_channel:

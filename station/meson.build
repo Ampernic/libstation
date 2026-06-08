@@ -18,6 +18,7 @@ station_headers = files(
   'station-service.h',
   'station-tray.h',
   'station-updates.h',
+  'station-updates-schema.h',
   'station-single-instance.h',
 )
 # Sources with public, introspectable API.
@@ -27,6 +28,7 @@ station_core = files(
   'station-service.c',
   'station-tray.c',
   'station-updates.c',
+  'station-updates-schema.c',
   'station-single-instance.c',
 )
 # Internal helpers with no public/introspectable API: built into the library but

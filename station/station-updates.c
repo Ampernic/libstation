@@ -5,9 +5,9 @@
 #define G_LOG_DOMAIN "Station-Updates"
 #include "station-updates.h"
 #include "station-http-private.h"
+#include "station-updates-schema-private.h"
 
 #include <gio/gio.h>
-#include <json-glib/json-glib.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -23,12 +23,13 @@ typedef struct
 
 struct _StationUpdates
 {
-  GObject       parent_instance;
-  char         *repo;            /* "owner/name" */
-  char         *current;         /* current version, no leading 'v' */
-  char         *channel;         /* active channel id; "stable" = releases only */
-  GPtrArray    *channels;        /* (element-type Channel), in registration order */
-  GCancellable *cancel;
+  GObject               parent_instance;
+  char                 *repo;       /* "owner/name" */
+  char                 *current;    /* current version, no leading 'v' */
+  char                 *channel;    /* active channel id; "stable" = releases only */
+  GPtrArray            *channels;   /* (element-type Channel), in registration order */
+  StationReleaseSchema *schema;     /* describes the release source (forge/custom) */
+  GCancellable         *cancel;
 };
 
 G_DEFINE_FINAL_TYPE (StationUpdates, station_updates, G_TYPE_OBJECT)
@@ -149,73 +150,50 @@ cmp_version (const char *a, const char *b)
   return result;
 }
 
-/* Parse the GitHub releases JSON body and emit "available" for the newest
- * applicable release that is newer than self->current. Runs on the main thread. */
+/* Parse the response per the configured schema and emit "available" for the
+ * newest applicable release that is newer than self->current. Main thread. */
 static void
 parse_and_emit (StationUpdates *self, const char *body, gsize len)
 {
-  JsonParser *parser = json_parser_new ();
   GError *err = NULL;
-  if (!json_parser_load_from_data (parser, body, (gssize) len, &err))
+  GPtrArray *releases = station_release_schema_parse (self->schema, body, len, &err);
+  if (releases == NULL)
     {
-      char *r = g_strdup_printf ("malformed JSON: %s", err ? err->message : "?");
+      char *r = g_strdup_printf ("unexpected response: %s", err ? err->message : "?");
       emit_failed (self, r);
       g_free (r);
       g_clear_error (&err);
-      g_object_unref (parser);
       return;
     }
-  JsonNode *root = json_parser_get_root (parser);
-  if (root == NULL || !JSON_NODE_HOLDS_ARRAY (root))
-    {
-      emit_failed (self, "unexpected response (not a releases array)");
-      g_object_unref (parser);
-      return;
-    }
-  JsonArray *arr = json_node_get_array (root);
-  guint count = json_array_get_length (arr);
 
-  /* Pick the highest-versioned release that qualifies for the active channel;
-   * GitHub lists by publish time, which isn't version order, so scan them all.
-   * The chosen strings point into the parser and stay valid until it is freed. */
-  const char *best = NULL, *best_url = "", *best_notes = "";
-  for (guint i = 0; i < count; i++)
+  /* Sources list by publish time, not version order, so scan all and keep the
+   * highest-versioned release that qualifies for the active channel. */
+  StationRelease *best = NULL;
+  const char *best_ver = NULL;   /* strip_v'd, points into best->version */
+  for (guint i = 0; i < releases->len; i++)
     {
-      JsonObject *o = json_array_get_object_element (arr, i);
-      if (json_object_get_boolean_member_with_default (o, "draft", FALSE))
+      StationRelease *rel = g_ptr_array_index (releases, i);
+      const char *ver = strip_v (rel->version);
+      if (!channel_qualifies (self, rel->prerelease, prerelease_label (ver)))
         continue;
-      const char *tag = json_object_has_member (o, "tag_name")
-                          ? json_object_get_string_member (o, "tag_name") : NULL;
-      if (tag == NULL || tag[0] == '\0')
-        continue;
-      const char *ver = strip_v (tag);
-      gboolean pre = json_object_get_boolean_member_with_default (o, "prerelease", FALSE);
-      if (!channel_qualifies (self, pre, prerelease_label (ver)))
-        continue;
-      if (best == NULL || cmp_version (ver, best) > 0)
-        {
-          best = ver;
-          /* _with_default returns "" when the member is absent OR JSON null — a
-           * release with empty notes has body: null, and the plain getter would
-           * return NULL, which then trips the non-nullable signal arg. */
-          best_url = json_object_get_string_member_with_default (o, "html_url", "");
-          best_notes = json_object_get_string_member_with_default (o, "body", "");
-        }
+      if (best == NULL || cmp_version (ver, best_ver) > 0)
+        { best = rel; best_ver = ver; }
     }
 
-  if (best != NULL && cmp_version (best, self->current) > 0)
+  if (best != NULL && cmp_version (best_ver, self->current) > 0)
     {
       g_message ("update available: %s (current %s, channel %s)",
-                 best, self->current, self->channel);
-      g_signal_emit (self, signals[SIG_AVAILABLE], 0, best, best_url, best_notes);
+                 best_ver, self->current, self->channel);
+      g_signal_emit (self, signals[SIG_AVAILABLE], 0,
+                     best_ver, best->page_url, best->notes);
     }
   else
     {
       g_debug ("up to date: best applicable %s, current %s, channel %s",
-               best ? best : "(none)", self->current, self->channel);
+               best_ver ? best_ver : "(none)", self->current, self->channel);
       g_signal_emit (self, signals[SIG_UP_TO_DATE], 0);
     }
-  g_object_unref (parser);
+  g_ptr_array_unref (releases);
 }
 
 /* ---- network fetch (worker thread) -------------------------------------- */
@@ -293,8 +271,7 @@ station_updates_check (StationUpdates *self)
   /* java.net needs the JavaVM; capture it now, on the main thread. */
   station_updates_android_prime ();
 #endif
-  char *url = g_strdup_printf (
-      "https://api.github.com/repos/%s/releases?per_page=15", self->repo);
+  char *url = station_release_schema_build_url (self->schema, self->repo);
 
   GTask *task = g_task_new (self, self->cancel, fetch_done, NULL);
   g_task_set_task_data (task, url, g_free);
@@ -416,12 +393,24 @@ station_updates_download (StationUpdates *self, const char *url, const char *des
 /* ---- GObject ------------------------------------------------------------ */
 
 StationUpdates *
-station_updates_new (const char *repo, const char *current_version)
+station_updates_new_with_schema (StationReleaseSchema *schema, const char *repo,
+                                 const char *current_version)
 {
+  g_return_val_if_fail (STATION_IS_RELEASE_SCHEMA (schema), NULL);
   g_return_val_if_fail (repo != NULL, NULL);
   StationUpdates *self = g_object_new (STATION_TYPE_UPDATES, NULL);
+  self->schema = g_object_ref (schema);
   self->repo = g_strdup (repo);
   self->current = g_strdup (strip_v (current_version != NULL ? current_version : ""));
+  return self;
+}
+
+StationUpdates *
+station_updates_new (const char *repo, const char *current_version)
+{
+  StationReleaseSchema *gh = station_release_schema_new_github ();
+  StationUpdates *self = station_updates_new_with_schema (gh, repo, current_version);
+  g_object_unref (gh);   /* new_with_schema took its own ref */
   return self;
 }
 
@@ -484,6 +473,7 @@ station_updates_finalize (GObject *object)
   g_clear_pointer (&self->current, g_free);
   g_clear_pointer (&self->channel, g_free);
   g_clear_pointer (&self->channels, g_ptr_array_unref);
+  g_clear_object (&self->schema);
   G_OBJECT_CLASS (station_updates_parent_class)->finalize (object);
 }
 
