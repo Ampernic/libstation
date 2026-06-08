@@ -83,6 +83,12 @@ void     station_android_foreground_bind     (GdkSurface *surface,
                                               const char *service_class);
 /* Update the ongoing notification text (calls <service_class>.setText). */
 void     station_android_foreground_set_text (const char *text);
+/* Hand a downloaded APK to the system installer by invoking the app helper's
+ * static `installApk(Context, String)` (e.g. via PackageInstaller). The helper
+ * class is app-provided so libstation stays app-agnostic. */
+void     station_android_install_apk         (GdkSurface *surface,
+                                              const char *helper_class,
+                                              const char *apk_path);
 /* Handler invoked on the GLib main loop each time the activity resumes. */
 void     station_android_set_resume_handler  (StationResumeFunc cb);
 #endif /* !__GI_SCANNER__ */

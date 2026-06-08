@@ -27,6 +27,8 @@ namespace Station {
 	public static void android_foreground_bind (Gdk.Surface surface, string application_class, string service_class);
 	[CCode (cname = "station_android_foreground_set_text", cheader_filename = "station.h")]
 	public static void android_foreground_set_text (string text);
+	[CCode (cname = "station_android_install_apk", cheader_filename = "station.h")]
+	public static void android_install_apk (Gdk.Surface surface, string helper_class, string apk_path);
 	[CCode (cname = "station_android_set_resume_handler", cheader_filename = "station.h")]
 	public static void android_set_resume_handler (Station.ResumeFunc cb);
 }

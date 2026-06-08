@@ -317,6 +317,47 @@ station_android_open_uri (GdkSurface *surface, const char *uri)
 }
 
 void
+station_android_install_apk (GdkSurface *surface, const char *helper_class,
+                             const char *apk_path)
+{
+  JNIEnv *env;
+  jobject activity;
+  GdkAndroidToplevel *toplevel;
+  if (!resolve (surface, &env, &activity, &toplevel))
+    return;
+  if (helper_class == NULL || apk_path == NULL)
+    return;
+
+  /* <helper_class>.installApk(activity, apk_path) — the app-side helper drives
+   * the PackageInstaller session and the system install prompt. */
+  jclass cls = load_app_class (env, activity, helper_class);
+  if (cls == NULL)
+    {
+      g_warning ("station android: could not load install helper %s", helper_class);
+      return;
+    }
+  jmethodID m = (*env)->GetStaticMethodID (env, cls, "installApk",
+                  "(Landroid/content/Context;Ljava/lang/String;)V");
+  if (m != NULL)
+    {
+      jstring jpath = (*env)->NewStringUTF (env, apk_path);
+      if (jpath != NULL)
+        {
+          (*env)->CallStaticVoidMethod (env, cls, m, activity, jpath);
+          if (exc (env))
+            g_warning ("station android: installApk threw");
+          (*env)->DeleteLocalRef (env, jpath);
+        }
+    }
+  else
+    {
+      exc (env);
+      g_warning ("station android: install helper has no installApk(Context,String)");
+    }
+  (*env)->DeleteGlobalRef (env, cls);
+}
+
+void
 station_android_request_notification_permission (GdkSurface *surface)
 {
   JNIEnv *env;
