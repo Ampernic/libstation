@@ -132,8 +132,15 @@ cmp_version (const char *a, const char *b)
   if (result == 0)
     {
       gboolean a_pre = (ap && *ap), b_pre = (bp && *bp);
+      /* "devel" (an untagged snapshot) is older than any tagged prerelease of the
+       * same core, which is older than the release; so a -devel build is offered
+       * every beta/rc, and a beta is offered the final. */
+      gboolean a_dev = (a_pre && g_str_has_prefix (ap, "devel"));
+      gboolean b_dev = (b_pre && g_str_has_prefix (bp, "devel"));
       if (a_pre && !b_pre)      result = -1;
       else if (!a_pre && b_pre) result = 1;
+      else if (a_dev && !b_dev) result = -1;
+      else if (!a_dev && b_dev) result = 1;
       else                      result = g_strcmp0 (ap ? ap : "", bp ? bp : "");
     }
   g_free (ad);
