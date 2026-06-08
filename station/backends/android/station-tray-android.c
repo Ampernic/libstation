@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* SPDX-License-Identifier: LGPL-3.0-or-later */
 /* Android has no status-area tray; the app surfaces status through the
  * foreground-service notification (see station-android.c) instead. Station.Tray
  * still constructs so cross-platform callers need no #ifdef — it's just inert. */

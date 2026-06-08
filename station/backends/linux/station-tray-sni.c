@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* SPDX-License-Identifier: LGPL-3.0-or-later */
 /* Linux backend: StatusNotifierItem (org.kde.StatusNotifierItem) + its
  * com.canonical.dbusmenu, hand-rolled over GDBus. Ported from the Vala tray the
  * TGProxy app shipped. No SNI host (no tray extension) → graceful no-op. */

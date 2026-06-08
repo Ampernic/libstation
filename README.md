@@ -52,4 +52,4 @@ Options: `-Dintrospection=enabled|disabled`, `-Dvapi=true|false`.
 
 ## License
 
-LGPL-2.1-or-later.
+LGPL-3.0-or-later.

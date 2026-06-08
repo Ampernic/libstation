@@ -6,7 +6,7 @@
 project('libstation', 'c',
   version: '0.1.0',
   meson_version: '>= 0.62',
-  license: 'LGPL-2.1-or-later',
+  license: 'LGPL-3.0-or-later',
   default_options: ['warning_level=2', 'c_std=gnu11'],
 )
 

@@ -1,10 +1,12 @@
 libstation is free software, licensed under the GNU Lesser General Public
-License, version 2.1 or (at your option) any later version (LGPL-2.1-or-later).
+License, version 3 or (at your option) any later version (LGPL-3.0-or-later).
 
-Every source file carries an `SPDX-License-Identifier: LGPL-2.1-or-later` header.
+Every source file carries an `SPDX-License-Identifier: LGPL-3.0-or-later` header.
 
-The full license text is available at:
-  https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt
+LGPL version 3 is the GNU General Public License version 3 supplemented by the
+additional permissions of the LGPL. The full texts are available at:
+  https://www.gnu.org/licenses/lgpl-3.0.txt
+  https://www.gnu.org/licenses/gpl-3.0.txt
 
 This program is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A

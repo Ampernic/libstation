@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* SPDX-License-Identifier: LGPL-3.0-or-later */
 /* Windows backend: Shell_NotifyIcon with a right-click menu built from the item
  * store. The tray lives in the GUI process (GDK pumps the thread's messages). */
 #ifndef STATION_COMPILATION

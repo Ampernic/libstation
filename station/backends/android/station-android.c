@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* SPDX-License-Identifier: LGPL-3.0-or-later */
 /* Android backend: background-operation helpers over the gdk-android public API
  * + JNI. The proxy/app runs in-process on Android (no daemon); these keep it
  * alive (battery-optimization exemption) and show its status (foreground-service

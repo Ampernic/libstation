@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* SPDX-License-Identifier: LGPL-3.0-or-later */
 /* macOS backend: an NSStatusItem in the menu bar with an NSMenu built from the
  * item store. Lives in the GTK process (its quartz backend pumps the AppKit run
  * loop). No ARC — manual retain/release. */
