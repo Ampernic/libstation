@@ -187,10 +187,11 @@ parse_and_emit (StationUpdates *self, const char *body, gsize len)
       if (best == NULL || cmp_version (ver, best) > 0)
         {
           best = ver;
-          best_url = json_object_has_member (o, "html_url")
-                       ? json_object_get_string_member (o, "html_url") : "";
-          best_notes = json_object_has_member (o, "body")
-                         ? json_object_get_string_member (o, "body") : "";
+          /* _with_default returns "" when the member is absent OR JSON null — a
+           * release with empty notes has body: null, and the plain getter would
+           * return NULL, which then trips the non-nullable signal arg. */
+          best_url = json_object_get_string_member_with_default (o, "html_url", "");
+          best_notes = json_object_get_string_member_with_default (o, "body", "");
         }
     }
 
