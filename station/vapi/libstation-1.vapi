@@ -90,4 +90,8 @@ namespace Station {
 	public static int64 get_pid ();
 	[CCode (cheader_filename = "station.h")]
 	public static bool open_uri (string uri) throws GLib.Error;
+	[CCode (cname = "StationActivateFunc", cheader_filename = "station.h", has_target = true)]
+	public delegate void ActivateFunc ();
+	[CCode (cheader_filename = "station.h")]
+	public static bool single_instance_acquire (string app_id, owned Station.ActivateFunc on_activate);
 }
