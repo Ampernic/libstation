@@ -81,11 +81,31 @@ char **station_updates_dup_channels (StationUpdates *self);
  */
 void station_updates_check (StationUpdates *self);
 
-/* Exactly one of these three signals fires per station_updates_check():
+/**
+ * station_updates_download:
+ * @self: a #StationUpdates
+ * @url: a direct download URL (https; redirects are followed)
+ * @dest_path: filesystem path to write the asset to
+ *
+ * Asynchronously downloads @url to @dest_path over the same transport as the
+ * check (GIO TLS on desktop, java.net on Android). Emits "download-progress"
+ * as it runs and then "downloaded" or "download-failed". The app picks the asset
+ * URL (deterministic from the release tag and its naming scheme) and applies the
+ * file once "downloaded" fires.
+ */
+void station_updates_download (StationUpdates *self, const char *url,
+                               const char *dest_path);
+
+/* Check signals — exactly one fires per station_updates_check():
  *   "available" (const char *version, const char *url, const char *notes):
  *       a newer release exists. version has no leading "v"; url is its release page.
  *   "up-to-date" (void): the check succeeded and no newer release applies.
  *   "failed" (const char *reason): the check could not complete (network/TLS,
- *       HTTP status, malformed response); reason is a human-readable diagnostic. */
+ *       HTTP status, malformed response); reason is a human-readable diagnostic.
+ *
+ * Download signals — per station_updates_download():
+ *   "download-progress" (double fraction): 0..1, or -1 when the size is unknown.
+ *   "downloaded" (const char *path): the asset is at @path.
+ *   "download-failed" (const char *reason). */
 
 G_END_DECLS

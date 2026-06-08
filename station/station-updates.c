@@ -32,7 +32,11 @@ struct _StationUpdates
 
 G_DEFINE_FINAL_TYPE (StationUpdates, station_updates, G_TYPE_OBJECT)
 
-enum { SIG_AVAILABLE, SIG_UP_TO_DATE, SIG_FAILED, N_SIGNALS };
+enum {
+  SIG_AVAILABLE, SIG_UP_TO_DATE, SIG_FAILED,
+  SIG_DL_PROGRESS, SIG_DOWNLOADED, SIG_DL_FAILED,
+  N_SIGNALS
+};
 static guint signals[N_SIGNALS];
 
 static void
@@ -216,9 +220,14 @@ parse_and_emit (StationUpdates *self, const char *body, gsize len)
 
 #ifdef __ANDROID__
 /* station-android.c. http_get returns a g_malloc'd body (caller frees) + length,
- * or NULL with *error set; prime captures the JavaVM while on the main thread. */
+ * or NULL with *error set; prime captures the JavaVM while on the main thread.
+ * download streams the URL (java.net follows redirects) into @out, reporting
+ * progress via station_updates_report_progress (self). */
 extern void     station_updates_android_prime (void);
 extern guint8 * station_updates_android_http_get (const char *url, gsize *out_len,
+                                                  GError **error);
+extern gboolean station_updates_android_download (const char *url, GOutputStream *out,
+                                                  gpointer self, GCancellable *cancel,
                                                   GError **error);
 #else
 /* On Windows the GIO TLS backend (gnutls) loads but has no system CA store, so
@@ -392,6 +401,285 @@ station_updates_check (StationUpdates *self)
   g_object_unref (task);
 }
 
+/* ---- asset download (worker thread) ------------------------------------- */
+
+typedef struct { StationUpdates *self; double frac; } ProgressData;
+
+static gboolean
+emit_progress_main (gpointer p)
+{
+  ProgressData *d = p;
+  g_signal_emit (d->self, signals[SIG_DL_PROGRESS], 0, d->frac);
+  g_object_unref (d->self);
+  g_free (d);
+  return G_SOURCE_REMOVE;
+}
+
+/* Emit "download-progress" on the main thread. total<=0 → fraction -1 (unknown).
+ * Called from the worker thread here and from station-android.c. */
+void
+station_updates_report_progress (gpointer self, gint64 got, gint64 total)
+{
+  ProgressData *d = g_new (ProgressData, 1);
+  d->self = g_object_ref (self);
+  d->frac = (total > 0) ? CLAMP ((double) got / (double) total, 0.0, 1.0) : -1.0;
+  g_main_context_invoke (NULL, emit_progress_main, d);
+}
+
+#ifndef __ANDROID__
+/* Split "https://host[:port]/path"; only https. */
+static gboolean
+parse_https_url (const char *url, char **host, guint16 *port, char **path)
+{
+  if (!g_str_has_prefix (url, "https://"))
+    return FALSE;
+  const char *p = url + 8;
+  const char *slash = strchr (p, '/');
+  const char *hostend = slash ? slash : p + strlen (p);
+  const char *colon = memchr (p, ':', (gsize) (hostend - p));
+  *port = 443;
+  if (colon != NULL)
+    {
+      *host = g_strndup (p, (gsize) (colon - p));
+      *port = (guint16) atoi (colon + 1);
+    }
+  else
+    *host = g_strndup (p, (gsize) (hostend - p));
+  *path = g_strdup (slash ? slash : "/");
+  return **host != '\0';
+}
+
+/* One HTTP/1.0 GET. 2xx: stream body to @out (with progress), *redirect=NULL.
+ * 3xx: *redirect=Location. Else: FALSE + *error. */
+static gboolean
+http_get_once (StationUpdates *self, const char *url, GOutputStream *out,
+               char **redirect, GCancellable *cancel, GError **error)
+{
+  *redirect = NULL;
+  char *host = NULL, *path = NULL;
+  guint16 port = 443;
+  if (!parse_https_url (url, &host, &port, &path))
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "bad URL");
+      return FALSE;
+    }
+
+  GSocketClient *client = g_socket_client_new ();
+  g_socket_client_set_tls (client, TRUE);
+  g_socket_client_set_timeout (client, 30);
+  const char *ca_file = g_getenv ("SSL_CERT_FILE");
+  if (ca_file != NULL && *ca_file != '\0')
+    {
+      GTlsDatabase *ca_db = g_tls_file_database_new (ca_file, NULL);
+      if (ca_db != NULL)
+        {
+          g_signal_connect (client, "event", G_CALLBACK (apply_ca_file), ca_db);
+          g_object_set_data_full (G_OBJECT (client), "station-ca-db", ca_db, g_object_unref);
+        }
+    }
+
+  GSocketConnection *conn = g_socket_client_connect_to_host (client, host, port, cancel, error);
+  if (conn == NULL)
+    { g_object_unref (client); g_free (host); g_free (path); return FALSE; }
+
+  char *req = g_strdup_printf (
+      "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: libstation\r\n"
+      "Accept: */*\r\nConnection: close\r\n\r\n", path, host);
+  GOutputStream *os = g_io_stream_get_output_stream (G_IO_STREAM (conn));
+  gboolean wrote = g_output_stream_write_all (os, req, strlen (req), NULL, cancel, error);
+  g_free (req);
+  if (!wrote)
+    { g_object_unref (conn); g_object_unref (client); g_free (host); g_free (path); return FALSE; }
+
+  GInputStream *is = g_io_stream_get_input_stream (G_IO_STREAM (conn));
+
+  /* Read the header block; any body bytes trailing the blank line are kept. */
+  GString *head = g_string_new (NULL);
+  char body0[65536];
+  gsize body0_len = 0;
+  guint8 tmp[8192];
+  gboolean have_sep = FALSE;
+  gssize n = 0;
+  while (!have_sep && (n = g_input_stream_read (is, tmp, sizeof tmp, cancel, error)) > 0)
+    {
+      g_string_append_len (head, (char *) tmp, n);
+      const char *sep = g_strstr_len (head->str, head->len, "\r\n\r\n");
+      if (sep != NULL)
+        {
+          have_sep = TRUE;
+          gsize hlen = (gsize) (sep - head->str) + 4;
+          body0_len = MIN (head->len - hlen, sizeof body0);
+          memcpy (body0, head->str + hlen, body0_len);
+          g_string_truncate (head, hlen);
+        }
+    }
+  if (!have_sep)
+    {
+      if (error != NULL && *error == NULL)
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "no HTTP headers");
+      g_string_free (head, TRUE);
+      g_object_unref (conn); g_object_unref (client); g_free (host); g_free (path);
+      return FALSE;
+    }
+
+  int status = (head->len > 12 && strncmp (head->str, "HTTP/1.", 7) == 0)
+                 ? atoi (head->str + 9) : 0;
+  char *lc = g_ascii_strdown (head->str, head->len);
+
+  if (status >= 300 && status < 400)
+    {
+      const char *loc = strstr (lc, "\r\nlocation:");
+      if (loc != NULL)
+        {
+          const char *val = head->str + (loc - lc) + 11;
+          while (*val == ' ') val++;
+          const char *eol = strstr (val, "\r\n");
+          *redirect = g_strndup (val, eol ? (gsize) (eol - val) : strlen (val));
+        }
+      g_free (lc);
+      g_string_free (head, TRUE);
+      g_object_unref (conn); g_object_unref (client); g_free (host); g_free (path);
+      if (*redirect == NULL)
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "redirect without Location");
+      return *redirect != NULL;
+    }
+  if (status != 200)
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "HTTP status %d", status);
+      g_free (lc);
+      g_string_free (head, TRUE);
+      g_object_unref (conn); g_object_unref (client); g_free (host); g_free (path);
+      return FALSE;
+    }
+
+  gint64 total = -1;
+  const char *cl = strstr (lc, "\r\ncontent-length:");
+  if (cl != NULL) total = g_ascii_strtoll (head->str + (cl - lc) + 17, NULL, 10);
+  g_free (lc);
+  g_string_free (head, TRUE);
+
+  gboolean ok = TRUE;
+  gint64 got = 0, last_report = 0;
+  if (body0_len > 0)
+    { ok = g_output_stream_write_all (out, body0, body0_len, NULL, cancel, error); got += body0_len; }
+  while (ok && (n = g_input_stream_read (is, tmp, sizeof tmp, cancel, error)) > 0)
+    {
+      ok = g_output_stream_write_all (out, tmp, n, NULL, cancel, error);
+      got += n;
+      if (got - last_report >= 65536)
+        { station_updates_report_progress (self, got, total); last_report = got; }
+    }
+  if (ok && n < 0) ok = FALSE;
+  if (ok) station_updates_report_progress (self, got, total > 0 ? total : got);
+
+  g_object_unref (conn); g_object_unref (client); g_free (host); g_free (path);
+  return ok;
+}
+
+static gboolean
+desktop_download (StationUpdates *self, const char *url, GOutputStream *out,
+                  GCancellable *cancel, GError **error)
+{
+  char *cur = g_strdup (url);
+  gboolean ok = FALSE;
+  for (int hop = 0; hop < 6; hop++)
+    {
+      char *redirect = NULL;
+      ok = http_get_once (self, cur, out, &redirect, cancel, error);
+      if (!ok || redirect == NULL) { g_free (redirect); g_free (cur); return ok; }
+      g_free (cur);
+      cur = redirect;
+    }
+  g_free (cur);
+  if (error != NULL && *error == NULL)
+    g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "too many redirects");
+  return FALSE;
+}
+#endif /* !__ANDROID__ */
+
+typedef struct { char *url; char *dest; } DownloadReq;
+
+static void
+download_req_free (gpointer p)
+{
+  DownloadReq *r = p;
+  g_free (r->url);
+  g_free (r->dest);
+  g_free (r);
+}
+
+static void
+download_thread (GTask *task, gpointer src, gpointer task_data, GCancellable *cancel)
+{
+  StationUpdates *self = STATION_UPDATES (src);
+  DownloadReq *req = task_data;
+  GError *err = NULL;
+
+  GFile *file = g_file_new_for_path (req->dest);
+  GFileOutputStream *out = g_file_replace (file, NULL, FALSE,
+                                           G_FILE_CREATE_REPLACE_DESTINATION, cancel, &err);
+  if (out == NULL)
+    { g_object_unref (file); g_task_return_error (task, err); return; }
+
+#ifdef __ANDROID__
+  gboolean ok = station_updates_android_download (req->url, G_OUTPUT_STREAM (out),
+                                                  self, cancel, &err);
+#else
+  gboolean ok = desktop_download (self, req->url, G_OUTPUT_STREAM (out), cancel, &err);
+#endif
+
+  g_output_stream_close (G_OUTPUT_STREAM (out), NULL, NULL);
+  g_object_unref (out);
+  if (!ok)
+    {
+      g_file_delete (file, NULL, NULL);   /* no half-written file */
+      g_object_unref (file);
+      g_task_return_error (task, err);
+      return;
+    }
+  g_object_unref (file);
+  g_task_return_boolean (task, TRUE);
+}
+
+static void
+download_done (GObject *src, GAsyncResult *res, gpointer user_data)
+{
+  (void) user_data;
+  StationUpdates *self = STATION_UPDATES (src);
+  DownloadReq *req = g_task_get_task_data (G_TASK (res));
+  GError *err = NULL;
+  if (g_task_propagate_boolean (G_TASK (res), &err))
+    {
+      g_message ("update downloaded to %s", req->dest);
+      g_signal_emit (self, signals[SIG_DOWNLOADED], 0, req->dest);
+    }
+  else
+    {
+      g_warning ("update download failed: %s", err ? err->message : "?");
+      g_signal_emit (self, signals[SIG_DL_FAILED], 0, err ? err->message : "?");
+      g_clear_error (&err);
+    }
+}
+
+void
+station_updates_download (StationUpdates *self, const char *url, const char *dest_path)
+{
+  g_return_if_fail (STATION_IS_UPDATES (self));
+  g_return_if_fail (url != NULL && dest_path != NULL);
+  g_debug ("downloading %s -> %s", url, dest_path);
+#ifdef __ANDROID__
+  station_updates_android_prime ();
+#endif
+  DownloadReq *req = g_new0 (DownloadReq, 1);
+  req->url = g_strdup (url);
+  req->dest = g_strdup (dest_path);
+
+  GTask *task = g_task_new (self, self->cancel, download_done, NULL);
+  g_task_set_task_data (task, req, download_req_free);
+  g_task_run_in_thread (task, download_thread);
+  g_object_unref (task);
+}
+
 /* ---- GObject ------------------------------------------------------------ */
 
 StationUpdates *
@@ -477,6 +765,15 @@ station_updates_class_init (StationUpdatesClass *klass)
       G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
       G_TYPE_NONE, 0);
   signals[SIG_FAILED] = g_signal_new ("failed",
+      G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+      G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIG_DL_PROGRESS] = g_signal_new ("download-progress",
+      G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+      G_TYPE_NONE, 1, G_TYPE_DOUBLE);
+  signals[SIG_DOWNLOADED] = g_signal_new ("downloaded",
+      G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+      G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIG_DL_FAILED] = g_signal_new ("download-failed",
       G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
       G_TYPE_NONE, 1, G_TYPE_STRING);
 }

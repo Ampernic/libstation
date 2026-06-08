@@ -57,9 +57,13 @@ namespace Station {
 		[CCode (array_length = false, array_null_terminated = true)]
 		public string[] dup_channels ();
 		public void check ();
+		public void download (string url, string dest_path);
 		public signal void available (string object, string p0, string p1);
 		public signal void up_to_date ();
 		public signal void failed (string object);
+		public signal void download_progress (double object);
+		public signal void downloaded (string object);
+		public signal void download_failed (string object);
 	}
 	[CCode (cheader_filename = "station.h", cprefix = "STATION_OS_", has_type_id = false)]
 	public enum Os {
