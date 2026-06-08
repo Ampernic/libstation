@@ -31,15 +31,55 @@ G_DECLARE_FINAL_TYPE (StationUpdates, station_updates, STATION, UPDATES, GObject
 StationUpdates *station_updates_new (const char *repo, const char *current_version);
 
 /**
+ * station_updates_add_channel:
+ * @self: a #StationUpdates
+ * @id: channel identifier (e.g. "beta"); compared case-insensitively
+ * @prerelease_labels: (array zero-terminated=1) (nullable): prerelease keywords
+ *   the channel accepts — a release tagged "<ver>-<label>…" qualifies when
+ *   <label> starts with one of these (e.g. {"beta","rc"}). NULL or empty = none.
+ *
+ * Registers a selectable channel. This is the developer-side definition of the
+ * update channels an app offers; registering is optional (set_channel also takes
+ * an unregistered id, treating it as a single accepted label). A stable release
+ * qualifies for every channel, so a channel only ever *adds* prereleases. The
+ * implicit "stable" channel (the default) accepts releases only.
+ */
+void station_updates_add_channel (StationUpdates *self, const char *id,
+                                  const char *const *prerelease_labels);
+
+/**
+ * station_updates_set_channel:
+ * @self: a #StationUpdates
+ * @id: (nullable): channel id; NULL, "" or "stable" means stable releases only
+ */
+void station_updates_set_channel (StationUpdates *self, const char *id);
+
+/**
+ * station_updates_get_channel:
+ * @self: a #StationUpdates
+ *
+ * Returns: the active channel id.
+ */
+const char *station_updates_get_channel (StationUpdates *self);
+
+/**
+ * station_updates_dup_channels:
+ * @self: a #StationUpdates
+ *
+ * Returns: (array zero-terminated=1) (transfer full): the registered channel ids
+ *   in registration order, for building an in-app selector. Free with g_strfreev.
+ */
+char **station_updates_dup_channels (StationUpdates *self);
+
+/**
  * station_updates_check:
  * @self: a #StationUpdates
- * @include_prerelease: also consider -beta/-rc releases (use when the running
- *   build is itself a prerelease)
  *
- * Asynchronously checks the newest applicable release; if it is newer than
- * @current_version, emits "available". Safe to call once per launch.
+ * Asynchronously checks for the newest release that qualifies for the active
+ * channel; if it is newer than @current_version, emits "available". Safe to call
+ * once per launch.
  */
-void station_updates_check (StationUpdates *self, gboolean include_prerelease);
+void station_updates_check (StationUpdates *self);
 
 /* Exactly one of these three signals fires per station_updates_check():
  *   "available" (const char *version, const char *url, const char *notes):

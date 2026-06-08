@@ -51,7 +51,12 @@ namespace Station {
 	public sealed class Updates : GLib.Object {
 		[CCode (has_construct_function = false)]
 		public Updates (string repo, string current_version);
-		public void check (bool include_prerelease);
+		public void add_channel (string id, [CCode (array_length = false, array_null_terminated = true)] string[]? prerelease_labels);
+		public void set_channel (string? id);
+		public unowned string get_channel ();
+		[CCode (array_length = false, array_null_terminated = true)]
+		public string[] dup_channels ();
+		public void check ();
 		public signal void available (string object, string p0, string p1);
 		public signal void up_to_date ();
 		public signal void failed (string object);

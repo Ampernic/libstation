@@ -10,12 +10,23 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* A selectable release channel: an id (e.g. "beta") and the prerelease labels it
+ * accepts. A stable release qualifies for every channel; a prerelease qualifies
+ * only where its tag's label (the part after '-', e.g. "beta" in "v2.1-beta3")
+ * starts with one of the channel's labels. */
+typedef struct
+{
+  char  *id;
+  GStrv  labels;
+} Channel;
+
 struct _StationUpdates
 {
   GObject       parent_instance;
   char         *repo;            /* "owner/name" */
   char         *current;         /* current version, no leading 'v' */
-  gboolean      include_pre;
+  char         *channel;         /* active channel id; "stable" = releases only */
+  GPtrArray    *channels;        /* (element-type Channel), in registration order */
   GCancellable *cancel;
 };
 
@@ -29,6 +40,60 @@ emit_failed (StationUpdates *self, const char *reason)
 {
   g_warning ("update check failed: %s", reason);
   g_signal_emit (self, signals[SIG_FAILED], 0, reason);
+}
+
+static void
+channel_free (gpointer p)
+{
+  Channel *c = p;
+  g_free (c->id);
+  g_strfreev (c->labels);
+  g_free (c);
+}
+
+static Channel *
+find_channel (StationUpdates *self, const char *id)
+{
+  if (id == NULL)
+    return NULL;
+  for (guint i = 0; i < self->channels->len; i++)
+    {
+      Channel *c = g_ptr_array_index (self->channels, i);
+      if (g_ascii_strcasecmp (c->id, id) == 0)
+        return c;
+    }
+  return NULL;
+}
+
+/* The prerelease label of a version (no leading 'v'): the part after the first
+ * '-', e.g. "beta3" for "2.1.0-beta3", or "" for a stable "2.1.0". */
+static const char *
+prerelease_label (const char *version)
+{
+  const char *d = strchr (version, '-');
+  return d ? d + 1 : "";
+}
+
+/* Does a release qualify for the active channel? Stable releases always do;
+ * a prerelease does only when its label matches the channel. An unregistered
+ * active id is taken as a single accepted label, so set_channel("beta") works
+ * without an explicit add_channel. */
+static gboolean
+channel_qualifies (StationUpdates *self, gboolean is_prerelease, const char *label)
+{
+  if (!is_prerelease || label[0] == '\0')
+    return TRUE;
+  const char *id = self->channel;
+  if (id == NULL || *id == '\0' || g_ascii_strcasecmp (id, "stable") == 0)
+    return FALSE;
+  Channel *c = find_channel (self, id);
+  if (c == NULL)
+    return g_ascii_strncasecmp (label, id, strlen (id)) == 0;
+  for (guint i = 0; c->labels != NULL && c->labels[i] != NULL; i++)
+    if (*c->labels[i] != '\0'
+        && g_ascii_strncasecmp (label, c->labels[i], strlen (c->labels[i])) == 0)
+      return TRUE;
+  return FALSE;
 }
 
 static const char *
@@ -97,39 +162,46 @@ parse_and_emit (StationUpdates *self, const char *body, gsize len)
     }
   JsonArray *arr = json_node_get_array (root);
   guint count = json_array_get_length (arr);
+
+  /* Pick the highest-versioned release that qualifies for the active channel;
+   * GitHub lists by publish time, which isn't version order, so scan them all.
+   * The chosen strings point into the parser and stay valid until it is freed. */
+  const char *best = NULL, *best_url = "", *best_notes = "";
   for (guint i = 0; i < count; i++)
     {
       JsonObject *o = json_array_get_object_element (arr, i);
       if (json_object_get_boolean_member_with_default (o, "draft", FALSE))
         continue;
-      if (!self->include_pre
-          && json_object_get_boolean_member_with_default (o, "prerelease", FALSE))
-        continue;
       const char *tag = json_object_has_member (o, "tag_name")
                           ? json_object_get_string_member (o, "tag_name") : NULL;
       if (tag == NULL || tag[0] == '\0')
         continue;
-      if (cmp_version (strip_v (tag), self->current) > 0)
+      const char *ver = strip_v (tag);
+      gboolean pre = json_object_get_boolean_member_with_default (o, "prerelease", FALSE);
+      if (!channel_qualifies (self, pre, prerelease_label (ver)))
+        continue;
+      if (best == NULL || cmp_version (ver, best) > 0)
         {
-          const char *url = json_object_has_member (o, "html_url")
-                              ? json_object_get_string_member (o, "html_url") : "";
-          const char *notes = json_object_has_member (o, "body")
-                                ? json_object_get_string_member (o, "body") : "";
-          g_message ("update available: %s (current %s)", strip_v (tag), self->current);
-          g_signal_emit (self, signals[SIG_AVAILABLE], 0, strip_v (tag), url, notes);
+          best = ver;
+          best_url = json_object_has_member (o, "html_url")
+                       ? json_object_get_string_member (o, "html_url") : "";
+          best_notes = json_object_has_member (o, "body")
+                         ? json_object_get_string_member (o, "body") : "";
         }
-      else
-        {
-          g_debug ("up to date: latest applicable %s, current %s",
-                   strip_v (tag), self->current);
-          g_signal_emit (self, signals[SIG_UP_TO_DATE], 0);
-        }
-      g_object_unref (parser);
-      return; /* newest applicable release decided the outcome */
     }
-  /* No applicable (non-draft, non-prerelease unless asked) release at all. */
-  g_debug ("up to date: no applicable release found (current %s)", self->current);
-  g_signal_emit (self, signals[SIG_UP_TO_DATE], 0);
+
+  if (best != NULL && cmp_version (best, self->current) > 0)
+    {
+      g_message ("update available: %s (current %s, channel %s)",
+                 best, self->current, self->channel);
+      g_signal_emit (self, signals[SIG_AVAILABLE], 0, best, best_url, best_notes);
+    }
+  else
+    {
+      g_debug ("up to date: best applicable %s, current %s, channel %s",
+               best ? best : "(none)", self->current, self->channel);
+      g_signal_emit (self, signals[SIG_UP_TO_DATE], 0);
+    }
   g_object_unref (parser);
 }
 
@@ -293,12 +365,11 @@ fetch_done (GObject *src, GAsyncResult *res, gpointer user_data)
 }
 
 void
-station_updates_check (StationUpdates *self, gboolean include_prerelease)
+station_updates_check (StationUpdates *self)
 {
   g_return_if_fail (STATION_IS_UPDATES (self));
-  self->include_pre = include_prerelease;
-  g_debug ("checking %s for releases newer than %s%s", self->repo, self->current,
-           include_prerelease ? " (incl. prereleases)" : "");
+  g_debug ("checking %s for releases newer than %s on channel %s",
+           self->repo, self->current, self->channel);
 
 #ifdef __ANDROID__
   /* java.net needs a full URL; capture the JavaVM now, on the main thread. */
@@ -333,6 +404,55 @@ station_updates_new (const char *repo, const char *current_version)
   return self;
 }
 
+void
+station_updates_add_channel (StationUpdates *self, const char *id,
+                             const char *const *prerelease_labels)
+{
+  g_return_if_fail (STATION_IS_UPDATES (self));
+  g_return_if_fail (id != NULL && *id != '\0');
+  Channel *c = find_channel (self, id);
+  if (c == NULL)
+    {
+      c = g_new0 (Channel, 1);
+      c->id = g_strdup (id);
+      g_ptr_array_add (self->channels, c);
+    }
+  else
+    g_clear_pointer (&c->labels, g_strfreev);
+  c->labels = prerelease_labels != NULL
+                ? g_strdupv ((char **) prerelease_labels)
+                : g_new0 (char *, 1);
+}
+
+void
+station_updates_set_channel (StationUpdates *self, const char *id)
+{
+  g_return_if_fail (STATION_IS_UPDATES (self));
+  g_free (self->channel);
+  self->channel = g_strdup ((id != NULL && *id != '\0') ? id : "stable");
+}
+
+const char *
+station_updates_get_channel (StationUpdates *self)
+{
+  g_return_val_if_fail (STATION_IS_UPDATES (self), NULL);
+  return self->channel;
+}
+
+char **
+station_updates_dup_channels (StationUpdates *self)
+{
+  g_return_val_if_fail (STATION_IS_UPDATES (self), NULL);
+  GPtrArray *ids = g_ptr_array_new ();
+  for (guint i = 0; i < self->channels->len; i++)
+    {
+      Channel *c = g_ptr_array_index (self->channels, i);
+      g_ptr_array_add (ids, g_strdup (c->id));
+    }
+  g_ptr_array_add (ids, NULL);
+  return (char **) g_ptr_array_free (ids, FALSE);
+}
+
 static void
 station_updates_finalize (GObject *object)
 {
@@ -341,6 +461,8 @@ station_updates_finalize (GObject *object)
   g_clear_object (&self->cancel);
   g_clear_pointer (&self->repo, g_free);
   g_clear_pointer (&self->current, g_free);
+  g_clear_pointer (&self->channel, g_free);
+  g_clear_pointer (&self->channels, g_ptr_array_unref);
   G_OBJECT_CLASS (station_updates_parent_class)->finalize (object);
 }
 
@@ -363,4 +485,6 @@ static void
 station_updates_init (StationUpdates *self)
 {
   self->cancel = g_cancellable_new ();
+  self->channel = g_strdup ("stable");
+  self->channels = g_ptr_array_new_with_free_func (channel_free);
 }
