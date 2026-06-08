@@ -131,7 +131,9 @@ pkgconfig = import('pkgconfig')
 pkgconfig.generate(libstation,
   name: vapi_pkg,
   description: 'Cross-platform desktop/mobile integration for GTK apps',
-  subdirs: 'libstation-' + api_version,
+  # Headers install under libstation-<api>/station/, and the vapi includes
+  # <station.h>, so the -I must reach that directory, not just its parent.
+  subdirs: 'libstation-' + api_version + '/station',
   requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0'],
   variables: ['vapidir=${datadir}/vala/vapi'],
 )
