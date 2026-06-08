@@ -11,14 +11,12 @@ G_BEGIN_DECLS
 
 /* Invoked in the primary instance, on the GLib main loop, when a later instance
  * tries to launch — the app should raise/present its window. */
-typedef void (*StationActivateFunc) (gpointer user_data);
+typedef void (*StationActivateFunc) (void);
 
 /**
  * station_single_instance_acquire:
  * @app_id: a stable application identifier (used to name the lock)
- * @on_activate: (scope notified) (nullable): called in the primary when another
- *   instance launches
- * @user_data: passed to @on_activate
+ * @on_activate: (nullable): called in the primary when another instance launches
  *
  * Enforces a single running instance. Returns %TRUE in the first (primary)
  * instance — proceed normally. Returns %FALSE in a later instance after asking
@@ -31,7 +29,6 @@ typedef void (*StationActivateFunc) (gpointer user_data);
  * the app unique there.
  */
 gboolean station_single_instance_acquire (const char *app_id,
-                                          StationActivateFunc on_activate,
-                                          gpointer user_data);
+                                          StationActivateFunc on_activate);
 
 G_END_DECLS

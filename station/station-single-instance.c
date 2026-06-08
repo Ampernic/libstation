@@ -9,7 +9,6 @@
 #include <windows.h>
 
 static StationActivateFunc g_cb = NULL;
-static gpointer            g_cb_data = NULL;
 static UINT                g_msg = 0;
 
 static gboolean
@@ -17,7 +16,7 @@ invoke_cb (gpointer d)
 {
   (void) d;
   if (g_cb != NULL)
-    g_cb (g_cb_data);
+    g_cb ();
   return G_SOURCE_REMOVE;
 }
 
@@ -35,8 +34,7 @@ wndproc (HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 }
 
 gboolean
-station_single_instance_acquire (const char *app_id, StationActivateFunc on_activate,
-                                 gpointer user_data)
+station_single_instance_acquire (const char *app_id, StationActivateFunc on_activate)
 {
   g_return_val_if_fail (app_id != NULL, TRUE);
 
@@ -67,7 +65,6 @@ station_single_instance_acquire (const char *app_id, StationActivateFunc on_acti
   /* Primary: keep the mutex for the process lifetime and stand up a hidden,
    * never-shown top-level window so later instances can find us by class. */
   g_cb = on_activate;
-  g_cb_data = user_data;
 
   WNDCLASSW wc = { 0 };
   wc.lpfnWndProc = wndproc;
@@ -84,12 +81,10 @@ station_single_instance_acquire (const char *app_id, StationActivateFunc on_acti
 #else /* !G_OS_WIN32 */
 
 gboolean
-station_single_instance_acquire (const char *app_id, StationActivateFunc on_activate,
-                                 gpointer user_data)
+station_single_instance_acquire (const char *app_id, StationActivateFunc on_activate)
 {
   (void) app_id;
   (void) on_activate;
-  (void) user_data;
   return TRUE;   /* GApplication already enforces uniqueness here */
 }
 
