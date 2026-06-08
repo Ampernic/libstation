@@ -10,69 +10,49 @@ version_h = configure_file(
   configuration: conf,
 )
 
-# Public headers (installed + introspected).
-station_headers = files(
-  'station.h',
-  'station-platform.h',
-  'station-control.h',
-  'station-service.h',
-  'station-tray.h',
-  'station-updates.h',
-  'station-updates-schema.h',
-  'station-single-instance.h',
-)
-# Sources with public, introspectable API.
-station_core = files(
-  'station-platform.c',
-  'station-control.c',
-  'station-service.c',
-  'station-tray.c',
-  'station-updates.c',
-  'station-updates-schema.c',
-  'station-single-instance.c',
-)
-# Internal helpers with no public/introspectable API: built into the library but
-# kept out of the GIR/vapi. station-http is the desktop HTTPS transport.
-station_internal = files(
-  'station-http.c',
-)
-# Native backends — the only place per-OS code lives, under backends/<os>/
-# (internal symbols only, excluded from introspection).
+# Source is organised one directory per subsystem; each subsystem's meson.build
+# (subdir() below) contributes to these lists and picks its own per-OS backend
+# from <subsystem>/<os>/. station_headers = public/installed (introspected);
+# station_core = public-API sources (introspected); station_internal = internal
+# helpers (built in, not introspected); station_backends = native per-OS code.
+station_headers = []
+station_core = []
+station_internal = []
 station_backends = []
 station_extra_deps = []
-# Control's POSIX transport uses GUnixSocketAddress (<gio/gunixsocketaddress.h>),
-# which lives in gio-unix-2.0; declare it explicitly so the include path is right
-# everywhere (notably the Android cross build), not just where gio-2.0 leaks it.
+
+# Cross-cutting per-OS deps (the subsystem sources that use them are added below).
 if host_os != 'windows'
+  # ipc's POSIX transport uses GUnixSocketAddress (<gio/gunixsocketaddress.h>);
+  # declare gio-unix explicitly so the include path is right everywhere.
   station_extra_deps += dependency('gio-unix-2.0')
 endif
 if host_os == 'windows'
   station_extra_deps += cc.find_library('shell32')    # ShellExecute / Shell_NotifyIcon
   station_extra_deps += cc.find_library('advapi32')   # registry (autostart)
   station_extra_deps += cc.find_library('user32')     # window + menu
-  station_backends += files('backends/windows/station-tray-win.c')
 elif host_os == 'darwin'
   add_languages('objc', native: false)
   station_extra_deps += dependency('appleframeworks', modules: ['Cocoa'])
-  station_backends += files('backends/macos/station-tray-mac.m')
 elif host_os == 'android'
-  # gdk-android gives the JNI env + Activity from a surface; jni.h comes from the
-  # NDK toolchain. No tray on Android — status is the foreground notification.
+  # gdk-android gives the JNI env + Activity from a surface; jni.h is from the NDK.
   station_extra_deps += dependency('gtk4')
-  station_backends += files(
-    'backends/android/station-android.c',
-    'backends/android/station-tray-android.c',
-  )
-else
-  station_backends += files('backends/linux/station-tray-sni.c')   # StatusNotifierItem over GDBus
 endif
+
+subdir('platform')
+subdir('ipc')
+subdir('service')
+subdir('tray')
+subdir('updates')
+subdir('single-instance')
 
 header_subdir = 'libstation-' + api_version / 'station'
 install_headers(station_headers, version_h, subdir: header_subdir)
 
-# The public + private headers live in station/; the backends include them by
-# bare name, so put this dir on the include path.
-station_inc = include_directories('.')
+# Every subsystem dir is on the include path so the bare-name includes (e.g.
+# "station-tray-private.h", "station-http-private.h") resolve from any backend.
+station_inc = include_directories('.', 'platform', 'ipc', 'service', 'tray',
+                                  'updates', 'single-instance')
 
 libstation = library('station-' + api_version,
   station_core, station_internal, station_backends, version_h,
