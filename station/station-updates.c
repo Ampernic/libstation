@@ -29,6 +29,8 @@ struct _StationUpdates
   char                 *channel;    /* active channel id; "stable" = releases only */
   GPtrArray            *channels;   /* (element-type Channel), in registration order */
   StationReleaseSchema *schema;     /* describes the release source (forge/custom) */
+  StationRelease       *available;  /* the release last reported via "available", retained
+                                     * so a verified download can resolve url+digest by name */
   GCancellable         *cancel;
 };
 
@@ -182,6 +184,10 @@ parse_and_emit (StationUpdates *self, const char *body, gsize len)
 
   if (best != NULL && cmp_version (best_ver, self->current) > 0)
     {
+      /* Retain it so download_checked() can resolve the asset url + digest by
+       * name later, after the user acts on the notification. */
+      g_clear_pointer (&self->available, station_release_free);
+      self->available = station_release_copy (best);
       g_message ("update available: %s (current %s, channel %s)",
                  best_ver, self->current, self->channel);
       g_signal_emit (self, signals[SIG_AVAILABLE], 0,
@@ -305,7 +311,17 @@ station_updates_report_progress (gpointer self, gint64 got, gint64 total)
 }
 
 
-typedef struct { char *url; char *dest; } DownloadReq;
+typedef struct
+{
+  char *url;
+  char *dest;
+  /* Verification (download_checked only; all NULL for a plain download):
+   * expected_sha256 is a known hex digest; else checksums_url is fetched and its
+   * line for @filename gives the digest. */
+  char *expected_sha256;
+  char *checksums_url;
+  char *filename;
+} DownloadReq;
 
 static void
 download_req_free (gpointer p)
@@ -313,7 +329,73 @@ download_req_free (gpointer p)
   DownloadReq *r = p;
   g_free (r->url);
   g_free (r->dest);
+  g_free (r->expected_sha256);
+  g_free (r->checksums_url);
+  g_free (r->filename);
   g_free (r);
+}
+
+/* SHA-256 of a file as lowercase hex, or NULL on read error. */
+static char *
+sha256_file (const char *path)
+{
+  GFile *f = g_file_new_for_path (path);
+  GFileInputStream *in = g_file_read (f, NULL, NULL);
+  g_object_unref (f);
+  if (in == NULL)
+    return NULL;
+  GChecksum *ck = g_checksum_new (G_CHECKSUM_SHA256);
+  guint8 buf[65536];
+  gssize n;
+  while ((n = g_input_stream_read (G_INPUT_STREAM (in), buf, sizeof buf, NULL, NULL)) > 0)
+    g_checksum_update (ck, buf, (gsize) n);
+  g_object_unref (in);
+  char *hex = (n < 0) ? NULL : g_strdup (g_checksum_get_string (ck));
+  g_checksum_free (ck);
+  return hex;
+}
+
+/* Find @filename's digest in a "HEX  name" / "HEX *name" checksums listing. */
+static char *
+sha256_from_sums (GBytes *sums, const char *filename)
+{
+  gsize len = 0;
+  const char *data = g_bytes_get_data (sums, &len);
+  char *text = g_strndup (data, len);
+  char **lines = g_strsplit (text, "\n", -1);
+  char *result = NULL;
+  for (guint i = 0; lines[i] != NULL && result == NULL; i++)
+    {
+      char *line = g_strstrip (lines[i]);
+      if (*line == '\0')
+        continue;
+      char **parts = g_strsplit_set (line, " \t", 2);
+      if (parts[0] != NULL && parts[1] != NULL)
+        {
+          char *name = g_strstrip (parts[1]);
+          if (*name == '*')   /* the "binary" marker */
+            name++;
+          if (g_strcmp0 (name, filename) == 0)
+            result = g_ascii_strdown (parts[0], -1);
+        }
+      g_strfreev (parts);
+    }
+  g_strfreev (lines);
+  g_free (text);
+  return result;
+}
+
+/* Fetch a URL body (same transport as the check). */
+static GBytes *
+fetch_bytes (const char *url, GCancellable *cancel, GError **error)
+{
+#ifdef __ANDROID__
+  gsize n = 0;
+  guint8 *b = station_updates_android_http_get (url, &n, error);
+  return b != NULL ? g_bytes_new_take (b, n) : NULL;
+#else
+  return station_http_get_bytes (url, 4u * 1024u * 1024u, cancel, error);
+#endif
 }
 
 static void
@@ -347,6 +429,44 @@ download_thread (GTask *task, gpointer src, gpointer task_data, GCancellable *ca
       g_task_return_error (task, err);
       return;
     }
+
+  /* Verify SHA-256 when requested: use the known digest, else fetch the
+   * checksums listing and look up @filename. A mismatch (or, when a checksum was
+   * expected, an unresolvable one) deletes the file and fails. */
+  char *expected = (req->expected_sha256 != NULL) ? g_strdup (req->expected_sha256) : NULL;
+  if (expected == NULL && req->checksums_url != NULL)
+    {
+      GBytes *sums = fetch_bytes (req->checksums_url, cancel, &err);
+      if (sums != NULL)
+        { expected = sha256_from_sums (sums, req->filename); g_bytes_unref (sums); }
+      if (expected == NULL)
+        {
+          g_file_delete (file, NULL, NULL);
+          g_object_unref (file);
+          if (err == NULL)
+            g_set_error (&err, G_IO_ERROR, G_IO_ERROR_FAILED,
+                         "no checksum for %s", req->filename);
+          g_task_return_error (task, err);
+          return;
+        }
+    }
+  if (expected != NULL)
+    {
+      char *actual = sha256_file (req->dest);
+      gboolean match = (actual != NULL && g_ascii_strcasecmp (actual, expected) == 0);
+      g_free (actual);
+      g_free (expected);
+      if (!match)
+        {
+          g_file_delete (file, NULL, NULL);
+          g_object_unref (file);
+          g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                   "SHA-256 mismatch");
+          return;
+        }
+      g_message ("update SHA-256 verified");
+    }
+
   g_object_unref (file);
   g_task_return_boolean (task, TRUE);
 }
@@ -384,6 +504,62 @@ station_updates_download (StationUpdates *self, const char *url, const char *des
   req->url = g_strdup (url);
   req->dest = g_strdup (dest_path);
 
+  GTask *task = g_task_new (self, self->cancel, download_done, NULL);
+  g_task_set_task_data (task, req, download_req_free);
+  g_task_run_in_thread (task, download_thread);
+  g_object_unref (task);
+}
+
+void
+station_updates_download_checked (StationUpdates *self, const char *asset_name,
+                                  const char *dest_path)
+{
+  g_return_if_fail (STATION_IS_UPDATES (self));
+  g_return_if_fail (asset_name != NULL && dest_path != NULL);
+
+  if (self->available == NULL || self->available->assets == NULL)
+    {
+      g_signal_emit (self, signals[SIG_DL_FAILED], 0, "no available release");
+      return;
+    }
+
+  /* Resolve the named asset (and the checksums asset, if configured) by name in
+   * the retained release. */
+  StationAsset *asset = NULL, *sums = NULL;
+  const char *sums_name = station_release_schema_get_checksums_asset (self->schema);
+  for (guint i = 0; i < self->available->assets->len; i++)
+    {
+      StationAsset *a = g_ptr_array_index (self->available->assets, i);
+      if (g_strcmp0 (a->name, asset_name) == 0)
+        asset = a;
+      if (sums_name != NULL && g_strcmp0 (a->name, sums_name) == 0)
+        sums = a;
+    }
+  if (asset == NULL || asset->url[0] == '\0')
+    {
+      char *r = g_strdup_printf ("asset not found: %s", asset_name);
+      g_signal_emit (self, signals[SIG_DL_FAILED], 0, r);
+      g_free (r);
+      return;
+    }
+
+  DownloadReq *req = g_new0 (DownloadReq, 1);
+  req->url = g_strdup (asset->url);
+  req->dest = g_strdup (dest_path);
+  req->filename = g_strdup (asset_name);
+  /* Prefer the asset's own digest ("sha256:HEX"); else the checksums asset; else
+   * download unverified (warned). */
+  if (asset->digest != NULL && g_ascii_strncasecmp (asset->digest, "sha256:", 7) == 0)
+    req->expected_sha256 = g_ascii_strdown (asset->digest + 7, -1);
+  else if (sums != NULL && sums->url[0] != '\0')
+    req->checksums_url = g_strdup (sums->url);
+  else
+    g_warning ("no checksum source for %s; downloading unverified", asset_name);
+
+#ifdef __ANDROID__
+  station_updates_android_prime ();
+#endif
+  g_debug ("downloading (checked) %s -> %s", req->url, dest_path);
   GTask *task = g_task_new (self, self->cancel, download_done, NULL);
   g_task_set_task_data (task, req, download_req_free);
   g_task_run_in_thread (task, download_thread);
@@ -473,6 +649,7 @@ station_updates_finalize (GObject *object)
   g_clear_pointer (&self->current, g_free);
   g_clear_pointer (&self->channel, g_free);
   g_clear_pointer (&self->channels, g_ptr_array_unref);
+  g_clear_pointer (&self->available, station_release_free);
   g_clear_object (&self->schema);
   G_OBJECT_CLASS (station_updates_parent_class)->finalize (object);
 }

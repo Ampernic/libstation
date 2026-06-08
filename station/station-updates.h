@@ -112,6 +112,23 @@ void station_updates_check (StationUpdates *self);
 void station_updates_download (StationUpdates *self, const char *url,
                                const char *dest_path);
 
+/**
+ * station_updates_download_checked:
+ * @self: a #StationUpdates
+ * @asset_name: the file name of an asset of the available release
+ * @dest_path: where to write it
+ *
+ * Downloads the named asset of the release last reported via "available",
+ * resolving its URL from that release and verifying its SHA-256 against the
+ * asset's own digest or the configured checksums asset (see
+ * station_release_schema_set_checksums_asset). A mismatch — or, when a checksum
+ * was expected, one that cannot be resolved — fails with "download-failed" and
+ * leaves no file. With no checksum source at all it downloads unverified (warned).
+ * Emits "download-progress" then "downloaded" / "download-failed".
+ */
+void station_updates_download_checked (StationUpdates *self, const char *asset_name,
+                                       const char *dest_path);
+
 /* Check signals — exactly one fires per station_updates_check():
  *   "available" (const char *version, const char *url, const char *notes):
  *       a newer release exists. version has no leading "v"; url is its release page.

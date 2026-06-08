@@ -18,9 +18,24 @@ struct _StationReleaseSchema
   char    *notes_field;
   char    *page_url_field;
   char    *prerelease_field;
+  char    *assets_member;     /* member holding the asset array within a release */
+  char    *asset_name_field;
+  char    *asset_url_field;
+  char    *asset_digest_field;
+  char    *checksums_asset;   /* asset name listing checksums, or NULL */
 };
 
 G_DEFINE_FINAL_TYPE (StationReleaseSchema, station_release_schema, G_TYPE_OBJECT)
+
+static void
+station_asset_free (gpointer p)
+{
+  StationAsset *a = p;
+  g_free (a->name);
+  g_free (a->url);
+  g_free (a->digest);
+  g_free (a);
+}
 
 void
 station_release_free (StationRelease *r)
@@ -30,7 +45,31 @@ station_release_free (StationRelease *r)
   g_free (r->version);
   g_free (r->notes);
   g_free (r->page_url);
+  g_clear_pointer (&r->assets, g_ptr_array_unref);
   g_free (r);
+}
+
+StationRelease *
+station_release_copy (const StationRelease *r)
+{
+  if (r == NULL)
+    return NULL;
+  StationRelease *c = g_new0 (StationRelease, 1);
+  c->version    = g_strdup (r->version);
+  c->prerelease = r->prerelease;
+  c->notes      = g_strdup (r->notes);
+  c->page_url   = g_strdup (r->page_url);
+  c->assets     = g_ptr_array_new_with_free_func (station_asset_free);
+  for (guint i = 0; r->assets != NULL && i < r->assets->len; i++)
+    {
+      StationAsset *a = g_ptr_array_index (r->assets, i);
+      StationAsset *d = g_new0 (StationAsset, 1);
+      d->name   = g_strdup (a->name);
+      d->url    = g_strdup (a->url);
+      d->digest = g_strdup (a->digest);
+      g_ptr_array_add (c->assets, d);
+    }
+  return c;
 }
 
 /* ---- setters ------------------------------------------------------------- */
@@ -43,13 +82,25 @@ station_release_free (StationRelease *r)
     g_free (self->field);                                                     \
     self->field = g_strdup (v);                                              \
   }
-SETTER (url,        url_template)
-SETTER (releases,   releases_path)
-SETTER (version,    version_field)
-SETTER (notes,      notes_field)
-SETTER (page_url,   page_url_field)
-SETTER (prerelease, prerelease_field)
+SETTER (url,             url_template)
+SETTER (releases,        releases_path)
+SETTER (version,         version_field)
+SETTER (notes,           notes_field)
+SETTER (page_url,        page_url_field)
+SETTER (prerelease,      prerelease_field)
+SETTER (assets,          assets_member)
+SETTER (asset_name,      asset_name_field)
+SETTER (asset_url,       asset_url_field)
+SETTER (asset_digest,    asset_digest_field)
+SETTER (checksums_asset, checksums_asset)
 #undef SETTER
+
+const char *
+station_release_schema_get_checksums_asset (StationReleaseSchema *self)
+{
+  g_return_val_if_fail (STATION_IS_RELEASE_SCHEMA (self), NULL);
+  return self->checksums_asset;
+}
 
 /* ---- presets ------------------------------------------------------------- */
 
@@ -149,6 +200,32 @@ bool_at (JsonObject *o, const char *path)
   return FALSE;
 }
 
+/* Parse the asset array (the @assets_member of a release object) into
+ * StationAsset records. Always returns a (possibly empty) array. */
+static GPtrArray *
+parse_assets (StationReleaseSchema *self, JsonObject *rel)
+{
+  GPtrArray *assets = g_ptr_array_new_with_free_func (station_asset_free);
+  JsonNode *node = node_at (rel, self->assets_member);
+  if (node == NULL || !JSON_NODE_HOLDS_ARRAY (node))
+    return assets;
+  JsonArray *arr = json_node_get_array (node);
+  guint n = json_array_get_length (arr);
+  for (guint i = 0; i < n; i++)
+    {
+      JsonNode *el = json_array_get_element (arr, i);
+      if (!JSON_NODE_HOLDS_OBJECT (el))
+        continue;
+      JsonObject *o = json_node_get_object (el);
+      StationAsset *a = g_new0 (StationAsset, 1);
+      a->name   = dup_string_at (o, self->asset_name_field);
+      a->url    = dup_string_at (o, self->asset_url_field);
+      a->digest = dup_string_at (o, self->asset_digest_field);
+      g_ptr_array_add (assets, a);
+    }
+  return assets;
+}
+
 GPtrArray *
 station_release_schema_parse (StationReleaseSchema *self,
                               const char *body, gsize len, GError **error)
@@ -200,6 +277,7 @@ station_release_schema_parse (StationReleaseSchema *self,
       r->prerelease = bool_at (o, self->prerelease_field);
       r->notes      = dup_string_at (o, self->notes_field);
       r->page_url   = dup_string_at (o, self->page_url_field);
+      r->assets     = parse_assets (self, o);
       g_ptr_array_add (out, r);
     }
 
@@ -221,6 +299,11 @@ station_release_schema_finalize (GObject *object)
   g_clear_pointer (&self->notes_field, g_free);
   g_clear_pointer (&self->page_url_field, g_free);
   g_clear_pointer (&self->prerelease_field, g_free);
+  g_clear_pointer (&self->assets_member, g_free);
+  g_clear_pointer (&self->asset_name_field, g_free);
+  g_clear_pointer (&self->asset_url_field, g_free);
+  g_clear_pointer (&self->asset_digest_field, g_free);
+  g_clear_pointer (&self->checksums_asset, g_free);
   G_OBJECT_CLASS (station_release_schema_parent_class)->finalize (object);
 }
 
@@ -240,4 +323,8 @@ station_release_schema_init (StationReleaseSchema *self)
   self->notes_field      = g_strdup ("body");
   self->page_url_field   = g_strdup ("html_url");
   self->prerelease_field = g_strdup ("prerelease");
+  self->assets_member     = g_strdup ("assets");
+  self->asset_name_field  = g_strdup ("name");
+  self->asset_url_field   = g_strdup ("browser_download_url");
+  self->asset_digest_field = g_strdup ("digest");
 }

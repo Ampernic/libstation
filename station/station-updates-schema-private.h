@@ -8,17 +8,28 @@
 
 G_BEGIN_DECLS
 
+/* One downloadable file of a release. digest is "" unless the source carries one
+ * (e.g. Gitea's "sha256:HEX"); the checksums asset is the fallback. */
+typedef struct
+{
+  char *name;
+  char *url;
+  char *digest;     /* algorithm-prefixed, e.g. "sha256:abc…", or "" */
+} StationAsset;
+
 /* One parsed release. version is the raw tag (a leading 'v' is stripped by the
  * caller's version logic). */
 typedef struct
 {
-  char     *version;
-  gboolean  prerelease;
-  char     *notes;
-  char     *page_url;
+  char      *version;
+  gboolean   prerelease;
+  char      *notes;
+  char      *page_url;
+  GPtrArray *assets;     /* (element-type StationAsset), may be empty */
 } StationRelease;
 
-void station_release_free (StationRelease *r);
+void            station_release_free (StationRelease *r);
+StationRelease *station_release_copy (const StationRelease *r);
 
 /* Build the request URL: substitute {host} (from the schema) and
  * {repo}/{owner}/{name} (from @repo, "owner/name"). */

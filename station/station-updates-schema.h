@@ -53,4 +53,18 @@ void station_release_schema_set_notes      (StationReleaseSchema *self, const ch
 void station_release_schema_set_page_url   (StationReleaseSchema *self, const char *field);
 void station_release_schema_set_prerelease (StationReleaseSchema *self, const char *field);
 
+/* Asset (downloadable file) fields within a release object, for verified
+ * downloads. @assets is the member holding the asset array (e.g. "assets"). */
+void station_release_schema_set_assets       (StationReleaseSchema *self, const char *member);
+void station_release_schema_set_asset_name   (StationReleaseSchema *self, const char *field);
+void station_release_schema_set_asset_url    (StationReleaseSchema *self, const char *field);
+/* Per-asset digest field, "sha256:HEX" (Gitea/Forgejo have it; GitHub does not). */
+void station_release_schema_set_asset_digest (StationReleaseSchema *self, const char *field);
+/* Name of an asset listing checksums ("HEX  filename" per line, e.g. "SHA256SUMS")
+ * used when an asset carries no digest of its own. */
+void station_release_schema_set_checksums_asset (StationReleaseSchema *self, const char *name);
+
+/* The configured checksums-asset name (NULL if none), for the verifier. */
+const char *station_release_schema_get_checksums_asset (StationReleaseSchema *self);
+
 G_END_DECLS
