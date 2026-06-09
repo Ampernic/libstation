@@ -16,7 +16,7 @@ typedef void (*StationActivateFunc) (void);
 /**
  * station_single_instance_acquire:
  * @app_id: a stable application identifier (used to name the lock)
- * @on_activate: (nullable): called in the primary when another instance launches
+ * @on_activate: (scope forever) (nullable): called in the primary when another instance launches
  *
  * Enforces a single running instance. Returns %TRUE in the first (primary)
  * instance — proceed normally. Returns %FALSE in a later instance after asking

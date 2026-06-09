@@ -21,6 +21,29 @@ namespace Station {
 		public void stop ();
 		public signal void command (string object);
 	}
+	[CCode (cheader_filename = "station.h", type_id = "station_release_schema_get_type ()")]
+	public sealed class ReleaseSchema : GLib.Object {
+		[CCode (has_construct_function = false)]
+		public ReleaseSchema ();
+		[CCode (has_construct_function = false)]
+		public ReleaseSchema.forgejo (string host);
+		public unowned string get_checksums_asset ();
+		[CCode (has_construct_function = false)]
+		public ReleaseSchema.gitea (string host);
+		[CCode (has_construct_function = false)]
+		public ReleaseSchema.github ();
+		public void set_asset_digest (string field);
+		public void set_asset_name (string field);
+		public void set_asset_url (string field);
+		public void set_assets (string member);
+		public void set_checksums_asset (string name);
+		public void set_notes (string field);
+		public void set_page_url (string field);
+		public void set_prerelease (string field);
+		public void set_releases (string jsonpath);
+		public void set_url (string tmpl);
+		public void set_version (string field);
+	}
 	[CCode (cheader_filename = "station.h", type_id = "station_service_get_type ()")]
 	public sealed class Service : GLib.Object {
 		[CCode (has_construct_function = false)]
@@ -52,18 +75,21 @@ namespace Station {
 		[CCode (has_construct_function = false)]
 		public Updates (string repo, string current_version);
 		public void add_channel (string id, [CCode (array_length = false, array_null_terminated = true)] string[]? prerelease_labels);
-		public void set_channel (string? id);
-		public unowned string get_channel ();
-		[CCode (array_length = false, array_null_terminated = true)]
-		public string[] dup_channels ();
 		public void check ();
 		public void download (string url, string dest_path);
+		public void download_checked (string asset_name, string dest_path);
+		[CCode (array_length = false, array_null_terminated = true)]
+		public string[] dup_channels ();
+		public unowned string get_channel ();
+		public void set_channel (string? id);
+		[CCode (has_construct_function = false)]
+		public Updates.with_schema (Station.ReleaseSchema schema, string repo, string current_version);
 		public signal void available (string object, string p0, string p1);
-		public signal void up_to_date ();
-		public signal void failed (string object);
+		public signal void download_failed (string object);
 		public signal void download_progress (double object);
 		public signal void downloaded (string object);
-		public signal void download_failed (string object);
+		public signal void failed (string object);
+		public signal void up_to_date ();
 	}
 	[CCode (cheader_filename = "station.h", cprefix = "STATION_OS_", has_type_id = false)]
 	public enum Os {
@@ -74,6 +100,8 @@ namespace Station {
 		ANDROID;
 		public unowned string to_string ();
 	}
+	[CCode (cheader_filename = "station.h", has_target = false)]
+	public delegate void ActivateFunc ();
 	[CCode (cheader_filename = "station.h", cname = "STATION_MAJOR_VERSION")]
 	public const int MAJOR_VERSION;
 	[CCode (cheader_filename = "station.h", cname = "STATION_MICRO_VERSION")]
@@ -90,8 +118,6 @@ namespace Station {
 	public static int64 get_pid ();
 	[CCode (cheader_filename = "station.h")]
 	public static bool open_uri (string uri) throws GLib.Error;
-	[CCode (cname = "StationActivateFunc", cheader_filename = "station.h", has_target = false)]
-	public delegate void ActivateFunc ();
 	[CCode (cheader_filename = "station.h")]
-	public static bool single_instance_acquire (string app_id, Station.ActivateFunc on_activate);
+	public static bool single_instance_acquire (string app_id, Station.ActivateFunc? on_activate);
 }
