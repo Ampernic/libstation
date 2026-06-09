@@ -577,23 +577,35 @@ station_updates_download_checked (StationUpdates *self, const char *asset_name,
   req->url = g_strdup (asset->url);
   req->dest = g_strdup (dest_path);
   req->filename = g_strdup (asset_name);
-  /* Prefer the asset's own digest ("sha256:HEX"); else the checksums asset; else
-   * download unverified (warned). */
-  if (asset->digest != NULL && g_ascii_strncasecmp (asset->digest, "sha256:", 7) == 0)
+  /* Resolve how the download is verified, strongest first. If a public key is
+   * configured a signed checksums asset is REQUIRED: fail closed rather than fall
+   * back to an unsigned listing or an inline digest, both of which a compromised
+   * release host controls (a downgrade attack otherwise strips the signature). */
+  const char *pubkey = station_release_schema_get_public_key (self->schema);
+  gboolean require_sig = (pubkey != NULL && *pubkey != '\0');
+
+  if (require_sig)
+    {
+      gboolean have_sums = (sums != NULL && sums->url[0] != '\0');
+      gboolean have_sig  = (sig  != NULL && sig->url[0]  != '\0');
+      if (!have_sums || !have_sig)
+        {
+          char *r = g_strdup_printf ("refusing unsigned update: missing %s",
+                                     !have_sums ? (sums_name ? sums_name : "checksums")
+                                                : (sig_name ? sig_name : "signature"));
+          g_signal_emit (self, signals[SIG_DL_FAILED], 0, r);
+          g_free (r);
+          download_req_free (req);
+          return;
+        }
+      req->checksums_url = g_strdup (sums->url);
+      req->sig_url = g_strdup (sig->url);
+      req->pubkey  = g_strdup (pubkey);
+    }
+  else if (asset->digest != NULL && g_ascii_strncasecmp (asset->digest, "sha256:", 7) == 0)
     req->expected_sha256 = g_ascii_strdown (asset->digest + 7, -1);
   else if (sums != NULL && sums->url[0] != '\0')
-    {
-      req->checksums_url = g_strdup (sums->url);
-      /* Authenticate the checksums with a minisign signature when configured. */
-      const char *pubkey = station_release_schema_get_public_key (self->schema);
-      if (sig != NULL && sig->url[0] != '\0' && pubkey != NULL && *pubkey != '\0')
-        {
-          req->sig_url = g_strdup (sig->url);
-          req->pubkey  = g_strdup (pubkey);
-        }
-      else if (sig_name != NULL)
-        g_warning ("signature asset %s configured but missing; checksums unsigned", sig_name);
-    }
+    req->checksums_url = g_strdup (sums->url);
   else
     g_warning ("no checksum source for %s; downloading unverified", asset_name);
 

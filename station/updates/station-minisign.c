@@ -4,7 +4,10 @@
 #endif
 #define G_LOG_DOMAIN "Station-Updates"
 #include "station-minisign-private.h"
-#include "vendor/monocypher.h"
+#include "vendor/monocypher.h"            /* crypto_blake2b (prehash) */
+#include "vendor/monocypher-ed25519.h"    /* crypto_ed25519_check: RFC 8032, SHA-512
+                                           * (minisign/libsodium-compatible, NOT
+                                           * monocypher's native BLAKE2b EdDSA) */
 
 #include <gio/gio.h>
 #include <string.h>
@@ -88,10 +91,10 @@ station_minisign_verify (const char *pubkey, GBytes *message,
     {
       guint8 h[64];
       crypto_blake2b (h, sizeof h, msg, msg_len);
-      ok = crypto_eddsa_check (sig, pk, h, sizeof h);
+      ok = crypto_ed25519_check (sig, pk, h, sizeof h);
     }
   else
-    ok = crypto_eddsa_check (sig, pk, msg, msg_len);
+    ok = crypto_ed25519_check (sig, pk, msg, msg_len);
 
   if (ok != 0)
     MINISIGN_FAIL ("signature does not verify");
