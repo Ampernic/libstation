@@ -28,6 +28,8 @@ namespace Station {
 		[CCode (has_construct_function = false)]
 		public ReleaseSchema.forgejo (string host);
 		public unowned string get_checksums_asset ();
+		public unowned string get_public_key ();
+		public unowned string get_signature_asset ();
 		[CCode (has_construct_function = false)]
 		public ReleaseSchema.gitea (string host);
 		[CCode (has_construct_function = false)]
@@ -40,7 +42,9 @@ namespace Station {
 		public void set_notes (string field);
 		public void set_page_url (string field);
 		public void set_prerelease (string field);
+		public void set_public_key (string public_key);
 		public void set_releases (string jsonpath);
+		public void set_signature_asset (string name);
 		public void set_url (string tmpl);
 		public void set_version (string field);
 	}

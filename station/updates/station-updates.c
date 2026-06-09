@@ -6,6 +6,7 @@
 #include "station-updates.h"
 #include "station-http-private.h"
 #include "station-updates-schema-private.h"
+#include "station-minisign-private.h"
 
 #include <gio/gio.h>
 #include <string.h>
@@ -317,10 +318,13 @@ typedef struct
   char *dest;
   /* Verification (download_checked only; all NULL for a plain download):
    * expected_sha256 is a known hex digest; else checksums_url is fetched and its
-   * line for @filename gives the digest. */
+   * line for @filename gives the digest. When sig_url + pubkey are set, the
+   * fetched checksums are first authenticated with a minisign signature. */
   char *expected_sha256;
   char *checksums_url;
   char *filename;
+  char *sig_url;
+  char *pubkey;
 } DownloadReq;
 
 static void
@@ -332,6 +336,8 @@ download_req_free (gpointer p)
   g_free (r->expected_sha256);
   g_free (r->checksums_url);
   g_free (r->filename);
+  g_free (r->sig_url);
+  g_free (r->pubkey);
   g_free (r);
 }
 
@@ -437,6 +443,27 @@ download_thread (GTask *task, gpointer src, gpointer task_data, GCancellable *ca
   if (expected == NULL && req->checksums_url != NULL)
     {
       GBytes *sums = fetch_bytes (req->checksums_url, cancel, &err);
+      /* Authenticate the checksums with the minisign signature first, so a
+       * compromised host can't serve a matching file + checksums pair. */
+      if (sums != NULL && req->sig_url != NULL && req->pubkey != NULL)
+        {
+          GBytes *sig = fetch_bytes (req->sig_url, cancel, &err);
+          gboolean sig_ok = (sig != NULL)
+            && station_minisign_verify (req->pubkey, sums, sig, &err);
+          g_clear_pointer (&sig, g_bytes_unref);
+          if (!sig_ok)
+            {
+              g_bytes_unref (sums);
+              g_file_delete (file, NULL, NULL);
+              g_object_unref (file);
+              if (err == NULL)
+                g_set_error_literal (&err, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                     "checksums signature did not verify");
+              g_task_return_error (task, err);
+              return;
+            }
+          g_message ("update checksums signature verified (minisign)");
+        }
       if (sums != NULL)
         { expected = sha256_from_sums (sums, req->filename); g_bytes_unref (sums); }
       if (expected == NULL)
@@ -525,8 +552,9 @@ station_updates_download_checked (StationUpdates *self, const char *asset_name,
 
   /* Resolve the named asset (and the checksums asset, if configured) by name in
    * the retained release. */
-  StationAsset *asset = NULL, *sums = NULL;
+  StationAsset *asset = NULL, *sums = NULL, *sig = NULL;
   const char *sums_name = station_release_schema_get_checksums_asset (self->schema);
+  const char *sig_name  = station_release_schema_get_signature_asset (self->schema);
   for (guint i = 0; i < self->available->assets->len; i++)
     {
       StationAsset *a = g_ptr_array_index (self->available->assets, i);
@@ -534,6 +562,8 @@ station_updates_download_checked (StationUpdates *self, const char *asset_name,
         asset = a;
       if (sums_name != NULL && g_strcmp0 (a->name, sums_name) == 0)
         sums = a;
+      if (sig_name != NULL && g_strcmp0 (a->name, sig_name) == 0)
+        sig = a;
     }
   if (asset == NULL || asset->url[0] == '\0')
     {
@@ -552,7 +582,18 @@ station_updates_download_checked (StationUpdates *self, const char *asset_name,
   if (asset->digest != NULL && g_ascii_strncasecmp (asset->digest, "sha256:", 7) == 0)
     req->expected_sha256 = g_ascii_strdown (asset->digest + 7, -1);
   else if (sums != NULL && sums->url[0] != '\0')
-    req->checksums_url = g_strdup (sums->url);
+    {
+      req->checksums_url = g_strdup (sums->url);
+      /* Authenticate the checksums with a minisign signature when configured. */
+      const char *pubkey = station_release_schema_get_public_key (self->schema);
+      if (sig != NULL && sig->url[0] != '\0' && pubkey != NULL && *pubkey != '\0')
+        {
+          req->sig_url = g_strdup (sig->url);
+          req->pubkey  = g_strdup (pubkey);
+        }
+      else if (sig_name != NULL)
+        g_warning ("signature asset %s configured but missing; checksums unsigned", sig_name);
+    }
   else
     g_warning ("no checksum source for %s; downloading unverified", asset_name);
 

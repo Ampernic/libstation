@@ -23,6 +23,8 @@ struct _StationReleaseSchema
   char    *asset_url_field;
   char    *asset_digest_field;
   char    *checksums_asset;   /* asset name listing checksums, or NULL */
+  char    *signature_asset;   /* asset name with a minisign signature, or NULL */
+  char    *public_key;        /* minisign public key (base64 line), or NULL */
 };
 
 G_DEFINE_FINAL_TYPE (StationReleaseSchema, station_release_schema, G_TYPE_OBJECT)
@@ -93,6 +95,8 @@ SETTER (asset_name,      asset_name_field)
 SETTER (asset_url,       asset_url_field)
 SETTER (asset_digest,    asset_digest_field)
 SETTER (checksums_asset, checksums_asset)
+SETTER (signature_asset, signature_asset)
+SETTER (public_key,      public_key)
 #undef SETTER
 
 const char *
@@ -100,6 +104,20 @@ station_release_schema_get_checksums_asset (StationReleaseSchema *self)
 {
   g_return_val_if_fail (STATION_IS_RELEASE_SCHEMA (self), NULL);
   return self->checksums_asset;
+}
+
+const char *
+station_release_schema_get_signature_asset (StationReleaseSchema *self)
+{
+  g_return_val_if_fail (STATION_IS_RELEASE_SCHEMA (self), NULL);
+  return self->signature_asset;
+}
+
+const char *
+station_release_schema_get_public_key (StationReleaseSchema *self)
+{
+  g_return_val_if_fail (STATION_IS_RELEASE_SCHEMA (self), NULL);
+  return self->public_key;
 }
 
 /* ---- presets ------------------------------------------------------------- */
@@ -304,6 +322,8 @@ station_release_schema_finalize (GObject *object)
   g_clear_pointer (&self->asset_url_field, g_free);
   g_clear_pointer (&self->asset_digest_field, g_free);
   g_clear_pointer (&self->checksums_asset, g_free);
+  g_clear_pointer (&self->signature_asset, g_free);
+  g_clear_pointer (&self->public_key, g_free);
   G_OBJECT_CLASS (station_release_schema_parent_class)->finalize (object);
 }
 

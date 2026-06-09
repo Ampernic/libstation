@@ -67,4 +67,14 @@ void station_release_schema_set_checksums_asset (StationReleaseSchema *self, con
 /* The configured checksums-asset name (NULL if none), for the verifier. */
 const char *station_release_schema_get_checksums_asset (StationReleaseSchema *self);
 
+/* Cryptographic signature (recommended): the checksums asset is authenticated
+ * with a minisign signature before its hashes are trusted, so a compromised
+ * release host cannot serve a malicious update — only a holder of the offline
+ * private key can. @name is the signature asset (e.g. "SHA256SUMS.minisig");
+ * @public_key is the minisign public key (the base64 line from the .pub file). */
+void station_release_schema_set_signature_asset (StationReleaseSchema *self, const char *name);
+void station_release_schema_set_public_key      (StationReleaseSchema *self, const char *public_key);
+const char *station_release_schema_get_signature_asset (StationReleaseSchema *self);
+const char *station_release_schema_get_public_key      (StationReleaseSchema *self);
+
 G_END_DECLS
