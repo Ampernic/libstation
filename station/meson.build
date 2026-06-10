@@ -47,7 +47,10 @@ subdir('updates')
 subdir('single-instance')
 
 header_subdir = 'libstation-' + api_version / 'station'
-install_headers(station_headers, version_h, subdir: header_subdir)
+# station.h is the umbrella header the vapi/gir reference (#include <station.h>);
+# it lives here, not in a subsystem dir, so install it alongside the per-subsystem
+# public headers or a consumer building against the installed .pc can't find it.
+install_headers(station_headers, files('station.h'), version_h, subdir: header_subdir)
 
 # Every subsystem dir is on the include path so the bare-name includes (e.g.
 # "station-tray-private.h", "station-http-private.h") resolve from any backend.
