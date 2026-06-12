@@ -60,15 +60,28 @@ make_tls_client (guint timeout)
   const char *ca_file = g_getenv ("SSL_CERT_FILE");
   if (ca_file != NULL && *ca_file != '\0')
     {
-      GTlsDatabase *ca_db = g_tls_file_database_new (ca_file, NULL);
+      GError *db_err = NULL;
+      GTlsDatabase *ca_db = g_tls_file_database_new (ca_file, &db_err);
       if (ca_db != NULL)
         {
+          g_message ("TLS trust: using CA bundle %s", ca_file);
           /* Tie the database's lifetime to the client so every return path frees
            * it; the handler holds only a borrowed pointer. */
           g_signal_connect (client, "event", G_CALLBACK (apply_ca_file), ca_db);
           g_object_set_data_full (G_OBJECT (client), "station-ca-db", ca_db,
                                   g_object_unref);
         }
+      else
+        {
+          g_warning ("TLS trust: cannot load CA bundle %s: %s — verification will "
+                     "fall back to the (possibly empty) system trust",
+                     ca_file, db_err ? db_err->message : "unknown error");
+          g_clear_error (&db_err);
+        }
+    }
+  else
+    {
+      g_message ("TLS trust: SSL_CERT_FILE unset; using the system trust store");
     }
   return client;
 }
