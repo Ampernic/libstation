@@ -86,6 +86,7 @@ namespace Station {
 		public string[] dup_channels ();
 		public unowned string get_channel ();
 		public void set_channel (string? id);
+		public void set_notes_section (string? heading);
 		[CCode (has_construct_function = false)]
 		public Updates.with_schema (Station.ReleaseSchema schema, string repo, string current_version);
 		public signal void available (string object, string p0, string p1);

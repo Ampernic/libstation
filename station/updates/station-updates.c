@@ -32,6 +32,8 @@ struct _StationUpdates
   StationReleaseSchema *schema;     /* describes the release source (forge/custom) */
   StationRelease       *available;  /* the release last reported via "available", retained
                                      * so a verified download can resolve url+digest by name */
+  char                 *notes_section; /* if set, emit only the notes block under this
+                                        * heading (a localized "What's new"); NULL = all */
   GCancellable         *cancel;
 };
 
@@ -153,6 +155,70 @@ cmp_version (const char *a, const char *b)
   return result;
 }
 
+/* Case-insensitive (Unicode-aware) heading match, so a passed "Что нового"
+ * matches the body's heading regardless of case. */
+static gboolean
+heading_matches (const char *a, const char *b)
+{
+  char *fa = g_utf8_casefold (a, -1);
+  char *fb = g_utf8_casefold (b, -1);
+  gboolean eq = (g_strcmp0 (fa, fb) == 0);
+  g_free (fa);
+  g_free (fb);
+  return eq;
+}
+
+/* Return the Markdown block under the heading @heading: the lines after the first
+ * heading whose text matches, up to the next heading of the same or higher level.
+ * Lets a consumer show only one section (e.g. a localized "What's new"); passing a
+ * locale-specific heading also selects the right language. The whole body is
+ * returned when @heading is unset or not found. Caller frees. */
+static char *
+extract_notes_section (const char *body, const char *heading)
+{
+  if (body == NULL)
+    return NULL;
+  if (heading == NULL || *heading == '\0')
+    return g_strdup (body);
+
+  char **lines = g_strsplit (body, "\n", -1);
+  GString *out = NULL;
+  int want_level = 0;
+  for (int i = 0; lines[i] != NULL; i++)
+    {
+      const char *l = lines[i];
+      int level = 0;
+      while (l[level] == '#')
+        level++;
+      gboolean is_heading = (level > 0 && level <= 6 && l[level] == ' ');
+
+      if (out == NULL)
+        {
+          if (is_heading)
+            {
+              char *htext = g_strstrip (g_strdup (l + level + 1));
+              if (heading_matches (htext, heading))
+                {
+                  out = g_string_new (NULL);
+                  want_level = level;
+                }
+              g_free (htext);
+            }
+          continue;
+        }
+      if (is_heading && level <= want_level)
+        break;                       /* next section of >= rank: stop */
+      g_string_append (out, l);
+      g_string_append_c (out, '\n');
+    }
+  g_strfreev (lines);
+
+  if (out == NULL)
+    return g_strdup (body);          /* heading not found: show everything */
+  char *s = g_string_free (out, FALSE);
+  return g_strchomp (s);
+}
+
 /* Parse the response per the configured schema and emit "available" for the
  * newest applicable release that is newer than self->current. Main thread. */
 static void
@@ -191,8 +257,10 @@ parse_and_emit (StationUpdates *self, const char *body, gsize len)
       self->available = station_release_copy (best);
       g_message ("update available: %s (current %s, channel %s)",
                  best_ver, self->current, self->channel);
+      char *notes = extract_notes_section (best->notes, self->notes_section);
       g_signal_emit (self, signals[SIG_AVAILABLE], 0,
-                     best_ver, best->page_url, best->notes);
+                     best_ver, best->page_url, notes);
+      g_free (notes);
     }
   else
     {
@@ -671,6 +739,14 @@ station_updates_set_channel (StationUpdates *self, const char *id)
   self->channel = g_strdup ((id != NULL && *id != '\0') ? id : "stable");
 }
 
+void
+station_updates_set_notes_section (StationUpdates *self, const char *heading)
+{
+  g_return_if_fail (STATION_IS_UPDATES (self));
+  g_free (self->notes_section);
+  self->notes_section = (heading != NULL && *heading != '\0') ? g_strdup (heading) : NULL;
+}
+
 const char *
 station_updates_get_channel (StationUpdates *self)
 {
@@ -703,6 +779,7 @@ station_updates_finalize (GObject *object)
   g_clear_pointer (&self->channel, g_free);
   g_clear_pointer (&self->channels, g_ptr_array_unref);
   g_clear_pointer (&self->available, station_release_free);
+  g_clear_pointer (&self->notes_section, g_free);
   g_clear_object (&self->schema);
   G_OBJECT_CLASS (station_updates_parent_class)->finalize (object);
 }

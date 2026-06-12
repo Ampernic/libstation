@@ -71,6 +71,20 @@ void station_updates_add_channel (StationUpdates *self, const char *id,
 void station_updates_set_channel (StationUpdates *self, const char *id);
 
 /**
+ * station_updates_set_notes_section:
+ * @self: a #StationUpdates
+ * @heading: (nullable): a Markdown heading text; NULL or "" emits the whole body
+ *
+ * Restricts the "available" signal's notes to the block under the heading whose
+ * text matches @heading (case-insensitive, Unicode-aware): everything from that
+ * heading to the next heading of the same or higher level. Lets a consumer show
+ * just one section, e.g. a "What's new" block; pass a locale-specific heading
+ * (such as a gettext-translated one) and it also selects the right language. The
+ * whole body is used when @heading is unset or no matching heading exists.
+ */
+void station_updates_set_notes_section (StationUpdates *self, const char *heading);
+
+/**
  * station_updates_get_channel:
  * @self: a #StationUpdates
  *
