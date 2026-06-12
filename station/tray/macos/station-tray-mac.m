@@ -87,6 +87,10 @@ _station_tray_backend_update (StationTray *self)
       NSImage *img = [[NSImage alloc] initWithContentsOfFile: ns (self->icon_file)];
       if (img != nil)
         {
+          /* Size in points, not the PNG's pixels: a status-bar glyph is ~18pt, and
+           * a higher-res PNG (e.g. 36px) is the @2x backing for Retina. Without this
+           * the image is drawn at its pixel size and overflows the menu bar. */
+          [img setSize: NSMakeSize (18, 18)];
           [img setTemplate: YES];   /* tint to the menu-bar appearance */
           [[m->item button] setImage: img];
           [img release];
